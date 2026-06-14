@@ -13,6 +13,7 @@ from .sharding import ShardedKnowledgeGraph
 from .vector import VectorKnowledgeGraph
 from .streaming import StreamingKnowledgeGraph
 from .blockchain import BlockchainKnowledgeGraph
+from .distillation import KnowledgeDistiller
 
 __version__ = "2.0.0"
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     'ShardedKnowledgeGraph',
     'VectorKnowledgeGraph',
     'StreamingKnowledgeGraph',
-    'BlockchainKnowledgeGraph'
+    'BlockchainKnowledgeGraph',
+    'KnowledgeDistiller'
 ]
