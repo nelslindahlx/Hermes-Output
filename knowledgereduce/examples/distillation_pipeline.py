@@ -28,10 +28,15 @@ SOURCE_TEXT = (
 
 def main():
     # 1. Build a graph and extract facts from raw text.
+    #    resolve_coref=True rewrites leading pronouns (e.g. "She discovered
+    #    radium" -> "Marie Curie discovered radium") so facts and the
+    #    generated Q&A pairs are attributed to the right entity.
     kg = KnowledgeGraph()
     skg = SemanticKnowledgeGraph(kg)
     auto_ids = skg.create_facts_from_text(
-        SOURCE_TEXT, source_id="demo", reliability=ReliabilityRating.LIKELY_TRUE
+        SOURCE_TEXT, source_id="demo",
+        reliability=ReliabilityRating.LIKELY_TRUE,
+        resolve_coref=True,
     )
 
     # 2. Add a couple of curated facts at different reliability levels.
