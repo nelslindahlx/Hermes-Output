@@ -14,6 +14,7 @@ from .vector import VectorKnowledgeGraph
 from .streaming import StreamingKnowledgeGraph
 from .blockchain import BlockchainKnowledgeGraph
 from .distillation import KnowledgeDistiller
+from .qa import QAGenerator
 
 __version__ = "2.0.0"
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     'VectorKnowledgeGraph',
     'StreamingKnowledgeGraph',
     'BlockchainKnowledgeGraph',
-    'KnowledgeDistiller'
+    'KnowledgeDistiller',
+    'QAGenerator'
 ]

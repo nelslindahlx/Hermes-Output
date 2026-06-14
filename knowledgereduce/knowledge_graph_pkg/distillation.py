@@ -141,33 +141,54 @@ class KnowledgeDistiller:
     def to_instruction_jsonl(self) -> str:
         """Render distilled facts as instruction-tuning JSONL.
 
-        Each line is ``{"instruction", "input", "output"}`` where the model
-        is asked about a fact and the output is the reliable statement.
+        Each line is ``{"instruction", "input", "output"}``. When a fact
+        carries a generated question, that question becomes the instruction
+        and its answer the output; otherwise a generic category-based
+        instruction is used with the full statement as output.
         """
         records = []
         for fact in self.select_facts():
             statement = fact["fact_statement"].strip()
             category = fact.get("category", "General")
+            question = fact.get("question")
+            answer = fact.get("answer")
+            if question and answer:
+                instruction = question
+                output = answer
+            else:
+                instruction = f"State a verified fact about {category}."
+                output = statement
             records.append(json.dumps({
-                "instruction": f"State a verified fact about {category}.",
+                "instruction": instruction,
                 "input": "",
-                "output": statement,
+                "output": output,
             }, ensure_ascii=False))
         return "\n".join(records)
 
     def to_chat_jsonl(self) -> str:
         """Render distilled facts as chat fine-tuning JSONL.
 
-        Each line is ``{"messages": [system?, user, assistant]}`` -- the
-        format consumed by most supervised fine-tuning pipelines.
+        Each line is ``{"messages": [user, assistant]}`` -- the format
+        consumed by most supervised fine-tuning pipelines. When a fact
+        carries a generated Q&A pair (``question``/``answer`` attributes),
+        the real question and answer are used; otherwise a generic prompt
+        about the fact's category is emitted as a fallback.
         """
         records = []
         for fact in self.select_facts():
             statement = fact["fact_statement"].strip()
             category = fact.get("category", "General")
+            question = fact.get("question")
+            answer = fact.get("answer")
+            if question and answer:
+                user_content = question
+                assistant_content = answer
+            else:
+                user_content = f"Tell me a fact about {category}."
+                assistant_content = statement
             messages = [
-                {"role": "user", "content": f"Tell me a fact about {category}."},
-                {"role": "assistant", "content": statement},
+                {"role": "user", "content": user_content},
+                {"role": "assistant", "content": assistant_content},
             ]
             records.append(json.dumps({"messages": messages}, ensure_ascii=False))
         return "\n".join(records)
@@ -188,3 +209,40 @@ class KnowledgeDistiller:
             "removed_facts": total - selected,
             "reduction_ratio": reduction,
         }
+
+    # ------------------------------------------------------------------ #
+    # File output
+    # ------------------------------------------------------------------ #
+    def distill_to_file(self, path: str, fmt: str = "chat", encoding: str = "utf-8") -> int:
+        """Distill the graph and write the result to a file.
+
+        Args:
+            path: Destination file path.
+            fmt: One of ``"chat"`` (chat JSONL), ``"instruction"``
+                (instruction JSONL), or ``"text"`` (ranked digest).
+            encoding: Text encoding for the output file.
+
+        Returns:
+            The number of facts written (for JSONL formats, the number of
+            non-empty lines; for text, the number of distilled facts).
+
+        Raises:
+            ValueError: If ``fmt`` is not a recognized format.
+        """
+        serializers = {
+            "chat": self.to_chat_jsonl,
+            "instruction": self.to_instruction_jsonl,
+            "text": self.to_text,
+        }
+        if fmt not in serializers:
+            raise ValueError(
+                f"Unknown format '{fmt}'. Expected one of: {', '.join(sorted(serializers))}."
+            )
+
+        content = serializers[fmt]()
+        with open(path, "w", encoding=encoding) as fh:
+            fh.write(content)
+            if content and not content.endswith("\n"):
+                fh.write("\n")
+
+        return len([line for line in content.splitlines() if line.strip()])

@@ -11,6 +11,7 @@ import string
 from datetime import datetime
 from typing import Dict, List, Any, Union, Optional, Tuple, Set, Callable
 from .core import KnowledgeGraph, ReliabilityRating
+from .qa import QAGenerator
 
 class SemanticKnowledgeGraph:
     """
@@ -36,6 +37,7 @@ class SemanticKnowledgeGraph:
         self.nlp_enabled = nlp_enabled
         self._entity_cache = {}
         self._relation_patterns = self._compile_relation_patterns()
+        self._qa_generator = QAGenerator()
         
     def extract_entities_from_text(self, text: str) -> List[Dict[str, Any]]:
         """
@@ -128,18 +130,35 @@ class SemanticKnowledgeGraph:
                     entities_before = [e for e in entities if e['end'] <= match_start]
                     entities_after = [e for e in entities if e['start'] >= match_end]
 
-                    if entities_before and entities_after:
-                        subject = max(entities_before, key=lambda e: e['end'])
-                        object_ = min(entities_after, key=lambda e: e['start'])
+                    if not entities_before:
+                        continue
 
-                        relations.append({
-                            'subject': subject['text'],
-                            'subject_type': subject['type'],
-                            'predicate': pattern_name,
-                            'object': object_['text'],
-                            'object_type': object_['type'],
-                            'text': sentence[subject['start']:object_['end']].strip()
-                        })
+                    subject = max(entities_before, key=lambda e: e['end'])
+
+                    if entities_after:
+                        object_ = min(entities_after, key=lambda e: e['start'])
+                        object_text = object_['text']
+                        object_type = object_['type']
+                        object_end = object_['end']
+                    else:
+                        # Fallback: no named entity follows the predicate, so
+                        # capture the trailing noun phrase (e.g. a common noun
+                        # like "radium"). Strip trailing punctuation.
+                        tail = sentence[match_end:].strip().rstrip('.!?,;:')
+                        if not tail:
+                            continue
+                        object_text = tail
+                        object_type = 'CONCEPT'
+                        object_end = len(sentence)
+
+                    relations.append({
+                        'subject': subject['text'],
+                        'subject_type': subject['type'],
+                        'predicate': pattern_name,
+                        'object': object_text,
+                        'object_type': object_type,
+                        'text': sentence[subject['start']:object_end].strip()
+                    })
 
         return relations
 
@@ -270,13 +289,46 @@ class SemanticKnowledgeGraph:
                     access_level="public",
                     usage_count=1
                 )
-                
+
+                # Attach the structured triple and a generated Q&A pair to the
+                # node so downstream distillation can emit real training pairs.
+                question, answer = self._qa_generator.generate(relation)
+                node = self.kg.graph.nodes[fact_id]
+                node['subject'] = relation['subject']
+                node['predicate'] = relation['predicate']
+                node['object'] = relation['object']
+                node['question'] = question
+                node['answer'] = answer
+
                 created_facts.append(fact_id)
-                
+
             except Exception as e:
                 print(f"Error creating fact from relation: {e}")
-        
+
         return created_facts
+
+    def create_facts_from_file(self, path: str, source_id: Optional[str] = None,
+                               reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED,
+                               encoding: str = "utf-8") -> List[str]:
+        """
+        Read a text document from disk and create facts from its contents.
+
+        Args:
+            path: Path to a UTF-8 text file to ingest.
+            source_id: Source identifier for the created facts. Defaults to
+                the file's base name when not provided.
+            reliability: Reliability rating for the extracted facts.
+            encoding: Text encoding to read the file with.
+
+        Returns:
+            List of created fact IDs.
+        """
+        import os
+        if source_id is None:
+            source_id = os.path.splitext(os.path.basename(path))[0]
+        with open(path, "r", encoding=encoding) as fh:
+            text = fh.read()
+        return self.create_facts_from_text(text, source_id=source_id, reliability=reliability)
     
     def find_semantically_similar_facts(self, fact_id: str, threshold: float = 0.5) -> List[Tuple[str, float]]:
         """
