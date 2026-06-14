@@ -157,6 +157,54 @@ class SemanticKnowledgeGraph:
             if sentence:
                 results.append((match.start(), sentence))
         return results
+
+    # Maps internal predicate keys to natural-language verb phrases so that
+    # auto-generated fact statements read as English rather than raw tuples.
+    _PREDICATE_VERBALIZATION = {
+        'works_for': 'works for',
+        'located_in': 'is located in',
+        'founded': 'founded',
+        'owns': 'owns',
+        'part_of': 'is part of',
+        'born_in': 'was born in',
+        'died_in': 'died in',
+        'married_to': 'is married to',
+        'parent_of': 'is the parent of',
+        'child_of': 'is the child of',
+        'discovered': 'discovered',
+        'invented': 'invented',
+        'wrote': 'wrote',
+        'directed': 'directed',
+        'acted_in': 'acted in',
+    }
+
+    def verbalize_relation(self, relation: Dict[str, Any]) -> str:
+        """
+        Render a relation dict as a natural-language sentence.
+
+        Converts the internal predicate key (e.g. ``born_in``) into a verb
+        phrase (``was born in``) and returns a capitalized, period-terminated
+        statement such as ``"Marie Curie was born in Warsaw."``.
+
+        Args:
+            relation: A relation dict with ``subject``, ``predicate`` and
+                ``object`` keys (as produced by extract_relations_from_text).
+
+        Returns:
+            A natural-language sentence describing the relation.
+        """
+        subject = relation['subject'].strip()
+        object_ = relation['object'].strip()
+        predicate = relation['predicate']
+        verb = self._PREDICATE_VERBALIZATION.get(predicate, predicate.replace('_', ' '))
+
+        statement = f"{subject} {verb} {object_}".strip()
+        # Capitalize first character and ensure terminal punctuation.
+        if statement:
+            statement = statement[0].upper() + statement[1:]
+            if not statement.endswith(('.', '!', '?')):
+                statement += '.'
+        return statement
     
     def create_facts_from_text(self, text: str, source_id: str, reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED) -> List[str]:
         """
@@ -182,8 +230,8 @@ class SemanticKnowledgeGraph:
         for i, relation in enumerate(relations):
             fact_id = f"auto_{source_id}_{i}"
             
-            # Create fact statement from relation
-            fact_statement = f"{relation['subject']} {relation['predicate']} {relation['object']}"
+            # Create fact statement from relation (natural-language form)
+            fact_statement = self.verbalize_relation(relation)
             
             # Determine category based on entity types
             if relation['subject_type'] == 'PERSON' and relation['object_type'] == 'ORGANIZATION':

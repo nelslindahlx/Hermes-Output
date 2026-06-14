@@ -87,3 +87,28 @@ def test_create_facts_from_text_runs(skg):
     )
     assert isinstance(ids, list)
     assert len(ids) >= 1
+
+
+def test_created_fact_statement_is_natural_language(skg):
+    """
+    Auto-created fact statements should read as natural English, not raw
+    'subject predicate object' tuples with underscores. This makes the
+    distilled output usable as training data.
+    """
+    ids = skg.create_facts_from_text(
+        "Barack Obama was born in Hawaii.",
+        source_id="demo",
+        reliability=ReliabilityRating.LIKELY_TRUE,
+    )
+    statements = [skg.kg.get_fact(i)["fact_statement"] for i in ids]
+    assert statements, "expected at least one created fact"
+    for s in statements:
+        assert "_" not in s, f"statement contains raw predicate underscore: {s!r}"
+    # the born_in relation should verbalize to 'was born in'
+    assert any("was born in" in s for s in statements)
+
+
+def test_verbalize_relation_maps_predicates(skg):
+    rel = {"subject": "Marie Curie", "subject_type": "PERSON",
+           "predicate": "born_in", "object": "Warsaw", "object_type": "ENTITY"}
+    assert skg.verbalize_relation(rel) == "Marie Curie was born in Warsaw."
