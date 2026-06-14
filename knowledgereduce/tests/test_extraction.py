@@ -78,3 +78,12 @@ def test_predicate_never_contains_spaces(ex):
     # predicates must be single tokens (underscored) for clean tags/Q&A
     for rel in ex.extract("Charles Carlsen was President of Johnson County Community College."):
         assert " " not in rel["predicate"]
+
+
+def test_title_abbreviation_does_not_split_sentence(ex):
+    # "Dr." must not end a sentence; the fact should stay intact.
+    rels = ex.extract("Dr. Raymond Davis provided advice and guidance.")
+    t = _triples(rels)
+    assert any(s == "Dr. Raymond Davis" or s == "Raymond Davis" for s, p, o in t)
+    # the object must not be just "Dr" from a bad split
+    assert all(o != "Dr" for s, p, o in t)

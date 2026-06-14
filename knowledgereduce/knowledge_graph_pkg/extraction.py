@@ -46,6 +46,15 @@ _NON_SUBJECT = {"this", "that", "these", "those", "there", "here", "it"}
 _SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?]?")
 _WORD_RE = re.compile(r"[A-Za-z0-9'&-]+|[,]")
 
+# Abbreviations whose trailing period must NOT be treated as a sentence end.
+_ABBREVIATIONS = [
+    "Dr.", "Mr.", "Mrs.", "Ms.", "Prof.", "Sr.", "Jr.", "St.",
+    "vs.", "etc.", "Inc.", "Corp.", "Ltd.", "Co.", "U.S.", "U.K.",
+    "Ph.D.", "M.D.", "B.A.", "M.A.",
+]
+# Sentinel used to mask abbreviation periods during sentence splitting.
+_DOT_SENTINEL = "\u0001"
+
 
 def _normalize_predicate(verb: str) -> str:
     """Lowercase a verb and make it a single underscore-joined token."""
@@ -70,9 +79,13 @@ class SVOExtractor:
     # ------------------------------------------------------------------ #
     @staticmethod
     def _split_sentences(text: str) -> List[str]:
+        # Mask abbreviation periods so they don't trigger a sentence break.
+        masked = text
+        for abbr in _ABBREVIATIONS:
+            masked = masked.replace(abbr, abbr.replace(".", _DOT_SENTINEL))
         out = []
-        for m in _SENTENCE_RE.finditer(text):
-            s = m.group(0).strip()
+        for m in _SENTENCE_RE.finditer(masked):
+            s = m.group(0).replace(_DOT_SENTINEL, ".").strip()
             if s:
                 out.append(s)
         return out

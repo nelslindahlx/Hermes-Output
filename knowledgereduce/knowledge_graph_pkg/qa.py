@@ -36,6 +36,17 @@ class QAGenerator:
         'wrote': "What did {s} write?",
         'directed': "What did {s} direct?",
         'acted_in': "What did {s} act in?",
+        'president_of': "What was {s} president of?",
+        'director_of': "What was {s} director of?",
+        'founder_of': "What was {s} founder of?",
+        'author_of': "What was {s} author of?",
+        'published': "When or where was {s} published?",
+        'developed': "What did {s} develop?",
+        'graduated': "What did {s} graduate with?",
+        'collaborated': "What did {s} collaborate on?",
+        'provided': "What did {s} provide?",
+        'told': "What did {s} tell?",
+        'is_a': "What is {s}?",
     }
 
     def generate(self, relation: Dict[str, Any]) -> Tuple[str, str]:
