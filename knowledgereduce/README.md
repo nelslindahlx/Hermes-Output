@@ -172,6 +172,71 @@ Generated chat records use **real questions** derived from the relation
 skg.create_facts_from_file("source.txt", reliability=ReliabilityRating.LIKELY_TRUE)
 ```
 
+## Extraction Quality & Limitations (heuristic baseline)
+
+KnowledgeReduce extraction is **pure-Python and dependency-free** — no
+spaCy, no transformers, no LLM. That keeps it fast (the full ~22k-word
+demo book processes in well under a second) and runnable anywhere, but it
+is fundamentally **heuristic**: it recognizes patterns, it does not
+*understand* text. Set expectations accordingly.
+
+### What it does well
+- Clean declarative sentences: *"Robert Putnam wrote Bowling Alone."*
+- Copula/role: *"Carlsen was President of JCCC."* → `president_of`
+- Passive voice: *"The book was published in 2006."* → `published` / `2006`
+- Multi-subject: *"Alice and Bob graduated."* → two facts
+- Pronoun attribution via opt-in `resolve_coref=True`
+
+### Where it struggles
+- **Abstract/argumentative prose** (philosophy, opinion) yields many
+  low-quality facts, because the extractor fires on every sentence whether
+  or not it states a crisp fact.
+- **Possessives and nested clauses** ("in Frederickson's class, where…")
+  confuse the subject/object boundaries.
+- **No real coreference, no semantic understanding** — a sentence-initial
+  word can be mistaken for a subject.
+
+### The quality filter
+
+`FactQualityFilter` removes the obvious junk (stopword subjects, run-on
+objects). Two modes, depending on your text:
+
+```python
+from knowledge_graph_pkg import FactQualityFilter, KnowledgeDistiller
+
+# Standard: drop stopword subjects + run-on objects. Good general default.
+qf = FactQualityFilter(max_object_len=80)
+
+# Strict: also require named-entity subjects + shorter objects.
+# Best for entity-rich text (biographies, news); too aggressive for
+# abstract prose, where it can over-filter into citations/headers.
+strict = FactQualityFilter(max_object_len=60, require_entity_subject=True)
+
+distiller = KnowledgeDistiller(kg, dedup_threshold=0.9, quality_filter=qf)
+```
+
+### Measured on the demo book (`data/civic_honors_book.txt`, ~21,765 words)
+
+| Stage | Facts |
+|-------|------:|
+| Raw extraction | 1,114 |
+| After dedup | 1,112 |
+| After **standard** filter | **190** |
+| After **strict** filter | 13* |
+
+\* On this *abstract* book, strict mode over-filters into the
+bibliography — the standard filter (190) is the better tradeoff here. On
+entity-rich prose (biographies, news, encyclopedic text) strict mode is
+the better choice. **Match the filter to the text.**
+
+### Beyond the heuristic ceiling
+
+To materially improve quality on hard text you would add dependency
+parsing (spaCy) or LLM-based extraction. Both are deliberately **out of
+scope** for this package, which targets a fast, portable, zero-dependency
+baseline. `data/civic_honors_distilled.jsonl` is the committed demo output
+(standard filter) so you can inspect real results without running anything.
+
 ## Testing
 
 ```bash

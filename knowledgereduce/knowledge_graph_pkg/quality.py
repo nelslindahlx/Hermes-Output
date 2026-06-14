@@ -49,9 +49,11 @@ class FactQualityFilter:
             (characters), which filters stray single letters. Default 2.
     """
 
-    def __init__(self, max_object_len: int = 80, min_subject_len: int = 2):
+    def __init__(self, max_object_len: int = 80, min_subject_len: int = 2,
+                 require_entity_subject: bool = False):
         self.max_object_len = max_object_len
         self.min_subject_len = min_subject_len
+        self.require_entity_subject = require_entity_subject
 
     # ------------------------------------------------------------------ #
     def is_acceptable(self, fact: Dict[str, Any]) -> bool:
@@ -79,6 +81,17 @@ class FactQualityFilter:
         words = subject.split()
         if len(words) == 1 and re.match(r"^[A-Z][a-z]+ing$", words[0]):
             return False
+
+        # Strict mode: require the subject to be a named entity. The
+        # extractor tags genuine named entities as ENTITY; abstract single
+        # nouns (CONCEPT) and bare copula fragments are dropped. A multi-word
+        # capitalized proper name is also accepted as an entity even if the
+        # type wasn't set.
+        if self.require_entity_subject:
+            stype = fact.get("subject_type")
+            multiword_proper = len(words) >= 2 and all(w[:1].isupper() for w in words)
+            if stype != "ENTITY" and not multiword_proper:
+                return False
 
         # Object must be reasonably short (a crisp answer, not a clause).
         if len(object_) > self.max_object_len:

@@ -85,3 +85,36 @@ def test_score_is_monotonic(qf):
     good = qf.score(_fact("Robert Putnam", "wrote", "Bowling Alone"))
     bad = qf.score(_fact("The", "is", "a determiner that runs on and on and on and on"))
     assert good > bad
+
+
+# ---------- strict mode: entity-subject + short objects ----------
+
+def test_strict_requires_entity_subject():
+    strict = FactQualityFilter(require_entity_subject=True, max_object_len=60)
+    # CONCEPT subject rejected even though capitalized and not a stopword
+    assert not strict.is_acceptable(
+        _fact("Change", "is", "inevitable", subject_type="CONCEPT")
+    )
+    # ENTITY subject accepted
+    assert strict.is_acceptable(
+        _fact("Robert Putnam", "wrote", "Bowling Alone", subject_type="ENTITY")
+    )
+
+
+def test_strict_rejects_single_word_concept_even_without_type():
+    # When require_entity_subject is on and no type given, a lone lowercase-ish
+    # abstract noun like "Civil" (from "Civil history") should be rejected
+    # because it is not a multi-word proper name nor typed ENTITY.
+    strict = FactQualityFilter(require_entity_subject=True)
+    assert not strict.is_acceptable(_fact("Civil", "is", "history", subject_type="CONCEPT"))
+
+
+def test_non_strict_still_accepts_concept_subject():
+    loose = FactQualityFilter(require_entity_subject=False)
+    assert loose.is_acceptable(_fact("Change", "is", "inevitable", subject_type="CONCEPT"))
+
+
+def test_strict_predicate_blocklist_rejects_bare_copula_concept():
+    # "X is Y" with a CONCEPT subject is usually a fragment; strict drops it.
+    strict = FactQualityFilter(require_entity_subject=True)
+    assert not strict.is_acceptable(_fact("Organizations", "is", "social", subject_type="CONCEPT"))
