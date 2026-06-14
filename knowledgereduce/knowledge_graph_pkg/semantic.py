@@ -50,57 +50,59 @@ class SemanticKnowledgeGraph:
         Returns:
             List of dictionaries containing entity information
         """
-        entities = []
-        
-        # Simple named entity extraction using regex patterns
-        # In a real implementation, this would use proper NLP libraries
-        
-        # Extract potential people (capitalized names)
-        person_pattern = r'([A-Z][a-z]+ [A-Z][a-z]+)'
+        # Candidate entities are collected with a type PRIORITY so that
+        # overlapping spans resolve deterministically. Higher priority wins;
+        # e.g. "Apple Inc" must be ORGANIZATION, never PERSON.
+        PRIORITY = {'ORGANIZATION': 4, 'LOCATION': 3, 'DATE': 2, 'PERSON': 1}
+        candidates = []
+
+        def add(text_, type_, start, end):
+            candidates.append({'text': text_, 'type': type_, 'start': start, 'end': end})
+
+        # Organizations: a capitalized phrase ending in a corporate suffix,
+        # or a standalone all-caps acronym (e.g. NASA).
+        org_pattern = r'\b((?:[A-Z][A-Za-z&]*\s)*[A-Z][A-Za-z&]*\s(?:Inc|Corp|LLC|Ltd|Company|Organization|University|Institute|Foundation|Group))\b|\b([A-Z]{2,})\b'
+        for match in re.finditer(org_pattern, text):
+            add(match.group(0), 'ORGANIZATION', match.start(), match.end())
+
+        # Locations: capitalized word(s) followed by a geographic term.
+        loc_pattern = r'\b([A-Z][a-z]+(?: [A-Z][a-z]+)* (?:City|State|Country|River|Mountain|Lake|Ocean|Sea|Island))\b'
+        for match in re.finditer(loc_pattern, text):
+            add(match.group(1), 'LOCATION', match.start(1), match.end(1))
+
+        # Dates.
+        date_pattern = r'\b(\d{1,2}/\d{1,2}/\d{2,4})|(\d{1,2}-\d{1,2}-\d{2,4})|(\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{2,4})\b'
+        for match in re.finditer(date_pattern, text):
+            add(match.group(0), 'DATE', match.start(), match.end())
+
+        # People: two capitalized words that look like a name.
+        person_pattern = r'\b([A-Z][a-z]+ [A-Z][a-z]+)\b'
         for match in re.finditer(person_pattern, text):
             name = match.group(1)
             if self._is_likely_name(name):
-                entities.append({
-                    'text': name,
-                    'type': 'PERSON',
-                    'start': match.start(),
-                    'end': match.end()
-                })
-        
-        # Extract potential organizations (all caps or capitalized with Inc, Corp, etc.)
-        org_pattern = r'([A-Z][A-Za-z]+ (?:Inc|Corp|LLC|Company|Organization))|([A-Z]{2,})'
-        for match in re.finditer(org_pattern, text):
-            org = match.group(0)
-            entities.append({
-                'text': org,
-                'type': 'ORGANIZATION',
-                'start': match.start(),
-                'end': match.end()
-            })
-        
-        # Extract potential locations (capitalized followed by geographic terms)
-        loc_pattern = r'([A-Z][a-z]+ (?:City|State|Country|River|Mountain|Lake|Ocean|Sea|Island))'
-        for match in re.finditer(loc_pattern, text):
-            loc = match.group(1)
-            entities.append({
-                'text': loc,
-                'type': 'LOCATION',
-                'start': match.start(),
-                'end': match.end()
-            })
-        
-        # Extract dates (simple patterns)
-        date_pattern = r'\b(\d{1,2}/\d{1,2}/\d{2,4})|(\d{1,2}-\d{1,2}-\d{2,4})|(\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{2,4})\b'
-        for match in re.finditer(date_pattern, text):
-            date = match.group(0)
-            entities.append({
-                'text': date,
-                'type': 'DATE',
-                'start': match.start(),
-                'end': match.end()
-            })
-        
-        return entities
+                add(name, 'PERSON', match.start(), match.end())
+
+        # Generic proper nouns: single capitalized words not otherwise
+        # classified (e.g. "Hawaii", "California"). Lowest priority so they
+        # only fill gaps and can act as relation subjects/objects.
+        PRIORITY['ENTITY'] = 0
+        for match in re.finditer(r'\b([A-Z][a-z]+)\b', text):
+            add(match.group(1), 'ENTITY', match.start(), match.end())
+
+        # Resolve overlaps: keep the highest-priority candidate for any
+        # span that overlaps another, dropping the lower-priority ones.
+        candidates.sort(key=lambda e: (e['start'], -PRIORITY.get(e['type'], 0)))
+        entities = []
+        for cand in sorted(candidates, key=lambda e: -PRIORITY.get(e['type'], 0)):
+            overlaps = any(
+                not (cand['end'] <= kept['start'] or cand['start'] >= kept['end'])
+                for kept in entities
+            )
+            if not overlaps:
+                entities.append(cand)
+
+        # Return in document order.
+        return sorted(entities, key=lambda e: e['start'])
     
     def extract_relations_from_text(self, text: str) -> List[Dict[str, Any]]:
         """
@@ -113,36 +115,48 @@ class SemanticKnowledgeGraph:
             List of dictionaries containing relation information
         """
         relations = []
-        
-        # Extract entities first
-        entities = self.extract_entities_from_text(text)
-        
-        # Look for relation patterns between entities
-        for pattern_name, pattern in self._relation_patterns.items():
-            for match in re.finditer(pattern, text):
-                # Find entities that overlap with the match
-                match_start, match_end = match.span()
-                
-                # Find entities before and after the relation
-                entities_before = [e for e in entities if e['end'] <= match_start]
-                entities_after = [e for e in entities if e['start'] >= match_end]
-                
-                # If we have entities before and after, create a relation
-                if entities_before and entities_after:
-                    # Use the closest entities to the relation
-                    subject = max(entities_before, key=lambda e: e['end'])
-                    object_ = min(entities_after, key=lambda e: e['start'])
-                    
-                    relations.append({
-                        'subject': subject['text'],
-                        'subject_type': subject['type'],
-                        'predicate': pattern_name,
-                        'object': object_['text'],
-                        'object_type': object_['type'],
-                        'text': text[subject['start']:object_['end']]
-                    })
-        
+
+        # Process each sentence independently so a relation can never link
+        # entities from two different sentences.
+        for sent_start, sentence in self._split_sentences(text):
+            entities = self.extract_entities_from_text(sentence)
+
+            for pattern_name, pattern in self._relation_patterns.items():
+                for match in re.finditer(pattern, sentence):
+                    match_start, match_end = match.span()
+
+                    entities_before = [e for e in entities if e['end'] <= match_start]
+                    entities_after = [e for e in entities if e['start'] >= match_end]
+
+                    if entities_before and entities_after:
+                        subject = max(entities_before, key=lambda e: e['end'])
+                        object_ = min(entities_after, key=lambda e: e['start'])
+
+                        relations.append({
+                            'subject': subject['text'],
+                            'subject_type': subject['type'],
+                            'predicate': pattern_name,
+                            'object': object_['text'],
+                            'object_type': object_['type'],
+                            'text': sentence[subject['start']:object_['end']].strip()
+                        })
+
         return relations
+
+    @staticmethod
+    def _split_sentences(text: str):
+        """
+        Split text into sentences, yielding (offset_in_original, sentence_text).
+
+        Uses a simple punctuation-based splitter (., !, ?) which is adequate
+        for the lightweight regex extraction this module performs.
+        """
+        results = []
+        for match in re.finditer(r'[^.!?]+[.!?]?', text):
+            sentence = match.group(0).strip()
+            if sentence:
+                results.append((match.start(), sentence))
+        return results
     
     def create_facts_from_text(self, text: str, source_id: str, reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED) -> List[str]:
         """
