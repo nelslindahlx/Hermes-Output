@@ -114,12 +114,79 @@ tx_hash = blockchain_kg.add_fact(
 verification = blockchain_kg.verify_fact("blockchain_fact_1")
 ```
 
+## Knowledge Distillation (the "reduce" step)
+
+KnowledgeReduce can distill a populated knowledge graph into compact,
+high-quality, **model-absorbable** training data. The pipeline is:
+
+```
+raw text -> semantic extraction (+ optional coreference)
+         -> reliability-rated knowledge graph
+         -> distillation: filter -> deduplicate -> rank -> top_k
+         -> model-absorbable output (text digest / instruction JSONL / chat JSONL)
+```
+
+```python
+from knowledge_graph_pkg import (
+    KnowledgeGraph, SemanticKnowledgeGraph, KnowledgeDistiller, ReliabilityRating,
+)
+
+kg = KnowledgeGraph()
+skg = SemanticKnowledgeGraph(kg)
+
+# Extract facts from text. resolve_coref rewrites leading pronouns
+# (e.g. "She discovered radium" -> "Marie Curie discovered radium").
+skg.create_facts_from_text(
+    "Marie Curie was born in Warsaw. She discovered radium.",
+    source_id="demo",
+    reliability=ReliabilityRating.LIKELY_TRUE,
+    resolve_coref=True,
+)
+
+# Distill: keep only reliable facts, dedup near-duplicates, rank by quality.
+distiller = KnowledgeDistiller(
+    kg,
+    min_reliability=ReliabilityRating.LIKELY_TRUE,
+    dedup_threshold=0.85,
+)
+
+print(distiller.to_text())          # ranked plain-text digest (RAG context)
+distiller.distill_to_file("train.jsonl", fmt="chat")          # chat SFT JSONL
+distiller.distill_to_file("instruct.jsonl", fmt="instruction")  # instruction JSONL
+print(distiller.stats())            # {'total_facts', 'selected_facts', 'reduction_ratio', ...}
+```
+
+Generated chat records use **real questions** derived from the relation
+(via `QAGenerator`), not generic prompts:
+
+```json
+{"messages": [{"role": "user", "content": "Where was Marie Curie born?"},
+              {"role": "assistant", "content": "Warsaw"}]}
+{"messages": [{"role": "user", "content": "What did Marie Curie discover?"},
+              {"role": "assistant", "content": "radium"}]}
+```
+
+### Ingesting documents from disk
+
+```python
+skg.create_facts_from_file("source.txt", reliability=ReliabilityRating.LIKELY_TRUE)
+```
+
+## Testing
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install networkx numpy requests beautifulsoup4 matplotlib pytest
+python -m pytest -q          # 40 tests
+```
+
 ## Examples
 
 See the `examples` directory for detailed usage examples:
 - `basic_usage.py`: Simple knowledge graph operations
 - `enhanced_features.py`: Advanced features demonstration
 - `ultimate_features.py`: Comprehensive example of all capabilities
+- `distillation_pipeline.py`: End-to-end text -> facts -> distilled JSONL
 
 ## Documentation
 
