@@ -13,6 +13,7 @@ from typing import Dict, List, Any, Union, Optional, Tuple, Set, Callable
 from .core import KnowledgeGraph, ReliabilityRating
 from .qa import QAGenerator
 from .coref import resolve_coreferences
+from .extraction import SVOExtractor
 
 class SemanticKnowledgeGraph:
     """
@@ -39,6 +40,7 @@ class SemanticKnowledgeGraph:
         self._entity_cache = {}
         self._relation_patterns = self._compile_relation_patterns()
         self._qa_generator = QAGenerator()
+        self._svo_extractor = SVOExtractor()
         
     def extract_entities_from_text(self, text: str) -> List[Dict[str, Any]]:
         """
@@ -226,7 +228,7 @@ class SemanticKnowledgeGraph:
                 statement += '.'
         return statement
     
-    def create_facts_from_text(self, text: str, source_id: str, reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED, resolve_coref: bool = False) -> List[str]:
+    def create_facts_from_text(self, text: str, source_id: str, reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED, resolve_coref: bool = False, use_svo: bool = True) -> List[str]:
         """
         Automatically create facts from text using NLP extraction.
 
@@ -239,6 +241,10 @@ class SemanticKnowledgeGraph:
                 antecedent before extraction. Improves attribution of
                 facts whose subject is a pronoun. Off by default to
                 preserve prior behavior.
+            use_svo: If True (default), use the stronger general-purpose
+                SVOExtractor (subject-verb-object, copula/role, passive,
+                multi-subject) which extracts far more from real prose. Set
+                False to fall back to the legacy fixed-pattern extractor.
 
         Returns:
             List of created fact IDs
@@ -248,8 +254,11 @@ class SemanticKnowledgeGraph:
         if resolve_coref:
             text = resolve_coreferences(text)
 
-        # Extract relations
-        relations = self.extract_relations_from_text(text)
+        # Extract relations using the chosen extractor.
+        if use_svo:
+            relations = self._svo_extractor.extract(text)
+        else:
+            relations = self.extract_relations_from_text(text)
         
         # Current time for timestamps
         now = datetime.now()
