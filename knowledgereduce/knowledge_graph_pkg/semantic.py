@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Union, Optional, Tuple, Set, Callable
 from .core import KnowledgeGraph, ReliabilityRating
 from .qa import QAGenerator
+from .coref import resolve_coreferences
 
 class SemanticKnowledgeGraph:
     """
@@ -225,20 +226,28 @@ class SemanticKnowledgeGraph:
                 statement += '.'
         return statement
     
-    def create_facts_from_text(self, text: str, source_id: str, reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED) -> List[str]:
+    def create_facts_from_text(self, text: str, source_id: str, reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED, resolve_coref: bool = False) -> List[str]:
         """
         Automatically create facts from text using NLP extraction.
-        
+
         Args:
             text: Text to extract facts from
             source_id: Source identifier for the facts
             reliability: Reliability rating for the extracted facts
-            
+            resolve_coref: If True, resolve leading subject pronouns
+                (He/She/They/It) to their most recent named-entity
+                antecedent before extraction. Improves attribution of
+                facts whose subject is a pronoun. Off by default to
+                preserve prior behavior.
+
         Returns:
             List of created fact IDs
         """
         created_facts = []
-        
+
+        if resolve_coref:
+            text = resolve_coreferences(text)
+
         # Extract relations
         relations = self.extract_relations_from_text(text)
         
@@ -309,7 +318,7 @@ class SemanticKnowledgeGraph:
 
     def create_facts_from_file(self, path: str, source_id: Optional[str] = None,
                                reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED,
-                               encoding: str = "utf-8") -> List[str]:
+                               encoding: str = "utf-8", resolve_coref: bool = False) -> List[str]:
         """
         Read a text document from disk and create facts from its contents.
 
@@ -319,6 +328,8 @@ class SemanticKnowledgeGraph:
                 the file's base name when not provided.
             reliability: Reliability rating for the extracted facts.
             encoding: Text encoding to read the file with.
+            resolve_coref: Forwarded to create_facts_from_text; resolve
+                leading subject pronouns before extraction.
 
         Returns:
             List of created fact IDs.
@@ -328,7 +339,9 @@ class SemanticKnowledgeGraph:
             source_id = os.path.splitext(os.path.basename(path))[0]
         with open(path, "r", encoding=encoding) as fh:
             text = fh.read()
-        return self.create_facts_from_text(text, source_id=source_id, reliability=reliability)
+        return self.create_facts_from_text(text, source_id=source_id,
+                                           reliability=reliability,
+                                           resolve_coref=resolve_coref)
     
     def find_semantically_similar_facts(self, fact_id: str, threshold: float = 0.5) -> List[Tuple[str, float]]:
         """

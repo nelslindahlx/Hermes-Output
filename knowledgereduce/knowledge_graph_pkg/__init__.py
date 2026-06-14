@@ -15,6 +15,7 @@ from .streaming import StreamingKnowledgeGraph
 from .blockchain import BlockchainKnowledgeGraph
 from .distillation import KnowledgeDistiller
 from .qa import QAGenerator
+from .coref import resolve_coreferences
 
 __version__ = "2.0.0"
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     'StreamingKnowledgeGraph',
     'BlockchainKnowledgeGraph',
     'KnowledgeDistiller',
-    'QAGenerator'
+    'QAGenerator',
+    'resolve_coreferences'
 ]
