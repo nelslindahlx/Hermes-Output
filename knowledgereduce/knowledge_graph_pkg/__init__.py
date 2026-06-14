@@ -16,6 +16,8 @@ from .blockchain import BlockchainKnowledgeGraph
 from .distillation import KnowledgeDistiller
 from .qa import QAGenerator
 from .coref import resolve_coreferences
+from .extraction import SVOExtractor
+from .quality import FactQualityFilter
 
 __version__ = "2.0.0"
 __all__ = [
@@ -29,5 +31,7 @@ __all__ = [
     'BlockchainKnowledgeGraph',
     'KnowledgeDistiller',
     'QAGenerator',
-    'resolve_coreferences'
+    'resolve_coreferences',
+    'SVOExtractor',
+    'FactQualityFilter'
 ]

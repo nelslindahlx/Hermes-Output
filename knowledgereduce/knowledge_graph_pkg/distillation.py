@@ -26,6 +26,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from .core import KnowledgeGraph, ReliabilityRating
+from .quality import FactQualityFilter
 
 
 class KnowledgeDistiller:
@@ -48,11 +49,13 @@ class KnowledgeDistiller:
         min_reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED,
         dedup_threshold: float = 0.0,
         top_k: Optional[int] = None,
+        quality_filter: Optional["FactQualityFilter"] = None,
     ):
         self.kg = knowledge_graph
         self.min_reliability = min_reliability
         self.dedup_threshold = dedup_threshold
         self.top_k = top_k
+        self.quality_filter = quality_filter
 
     # ------------------------------------------------------------------ #
     # Selection pipeline
@@ -61,9 +64,9 @@ class KnowledgeDistiller:
         """Return the distilled facts as a ranked list of node dicts.
 
         Each returned dict is a copy of the graph node's attributes with an
-        added ``fact_id`` key. The list is filtered by reliability,
-        de-duplicated (if enabled), ranked by quality score (descending),
-        and truncated to ``top_k`` (if set).
+        added ``fact_id`` key. The list is filtered by reliability, passed
+        through the optional quality filter, de-duplicated (if enabled),
+        ranked by quality score (descending), and truncated to ``top_k``.
         """
         facts: List[Dict[str, Any]] = []
         for fact_id, data in self.kg.graph.nodes(data=True):
@@ -75,6 +78,11 @@ class KnowledgeDistiller:
             record = dict(data)
             record["fact_id"] = fact_id
             facts.append(record)
+
+        # Drop low-quality facts (junk subjects, run-on objects) if a
+        # quality filter was supplied.
+        if self.quality_filter is not None:
+            facts = [f for f in facts if self.quality_filter.is_acceptable(f)]
 
         # Rank by quality score (descending), tie-break by fact_id for
         # determinism.
