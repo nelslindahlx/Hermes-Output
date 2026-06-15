@@ -21,21 +21,21 @@
 │                        MODELREDUCE PIPELINE                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  ABANDONED MODELS                                                           │
-│  ├─ Ollama (local quantized)                                                │
-│  ├─ HuggingFace checkpoints                                                 │
-│  ├─ GGUF files                                                              │
-│  ├─ vLLM endpoints                                                          │
-│  └─ OpenAI-compatible APIs                                                  │
+│  ABANDONED MODELS (Ollama-First v1)                                         │
+│  ├─ Ollama (local quantized)  ← PRIMARY: your models are HERE              │
+│  ├─ HuggingFace checkpoints      ← Future: Session 4+ discovery            │
+│  ├─ GGUF files                   ← Future: direct load via llama.cpp       │
+│  ├─ vLLM endpoints               ← Future: high-throughput serving         │
+│  └─ OpenAI-compatible APIs       ← Future: remote models                   │
 │        │                                                                    │
 │        ▼                                                                    │
 │  ┌─────────────────┐    ┌──────────────────┐    ┌──────────────────────┐   │
 │  │  MODEL PROBE    │───▶│  MODEL DROPS     │───▶│  CROSS-MODEL         │   │
 │  │  (Session 1)    │    │  (Session 2)     │    │  VERIFICATION        │   │
 │  │                 │    │                  │    │  (Session 2)         │   │
-│  │ • Backend-agnostic     │ • Provenance   │    │                      │   │
-│  │ • Domain templates  │ • Prompt+Response│    │ • Semantic clustering│   │
-│  │ • Batched gen       │ • Gen params     │    │ • Agreement counting │   │
+│  │ • Ollama backend     │ • Provenance     │    │                      │   │
+│  │ • Domain templates   │ • Prompt+Response│    │ • Semantic clustering│   │
+│  │ • Batched gen        │ • Gen params     │    │ • Agreement counting │   │
 │  └─────────────────┘    └──────────────────┘    └──────────┬───────────┘   │
 │                                                            │               │
 │                                                            ▼               │
@@ -89,22 +89,35 @@
 
 ## Session Plan (8 Sessions)
 
-### Session 1: Model Probe Infrastructure
+### Session 1: Model Probe Infrastructure (Ollama-First)
 **Target:** `knowledge_graph_pkg/model_probe.py`, `probe_templates.py`
 
-**Backend Support (pluggable, lazy-loaded):**
+**Design Decision:** Ollama-only for v1. Your abandoned models are already in Ollama (qwen2.5:14b, phi4, etc.). No API keys, no network latency, free, private, total control. Future sessions can add HF/vLLM/API backends behind the same protocol if needed.
+
+**Backend Support (Ollama v1, protocol ready for extension):**
 ```python
 class ProbeBackend(Protocol):
     def generate(self, prompts: List[str], **gen_kwargs) -> List[str]: ...
 
-# Implementations:
-class OllamaBackend(ProbeBackend): ...
-class HFBackend(ProbeBackend): ...      # transformers + accelerate
-class VLLMBackend(ProbeBackend): ...    # vllm.LLM
-class APIBackend(ProbeBackend): ...     # OpenAI-compatible
+# Session 1 implements:
+class OllamaBackend:
+    """Primary backend — uses local Ollama server (http://localhost:11434)."""
+    def __init__(self, model: str, host: str = "http://localhost:11434"):
+        self.client = ollama.Client(host=host)
+        self.model = model
+    
+    def generate(self, prompts: List[str], **gen_kwargs) -> List[str]:
+        # Concurrent requests for batching; Ollama handles queueing
+        ...
+
+# Future backends (not in Session 1, lazy-loaded when needed):
+# class HFBackend(ProbeBackend): ...      # transformers + accelerate
+# class VLLMBackend(ProbeBackend): ...    # vllm.LLM
+# class APIBackend(ProbeBackend): ...     # OpenAI-compatible
 ```
 
 **Prompt Templates (domain-parameterized):**
+
 | Type | Template | Use Case |
 |------|----------|----------|
 | `entity` | "State a verified fact about {entity} in {domain}." | Atomic facts |
@@ -119,7 +132,7 @@ class APIBackend(ProbeBackend): ...     # OpenAI-compatible
 ```json
 {
   "model": "model-name",
-  "backend": "ollama|hf|vllm|api",
+  "backend": "ollama",
   "domain": "biochemistry",
   "prompt_type": "entity|relation|concept|list|negative",
   "prompt": "...",
@@ -302,9 +315,9 @@ knowledgereduce graveyard /path/to/models/ \
   --models-per-domain 3 \
   --promote-threshold 2 \
   --output-shards ./shards/ \
-  --backend auto \           # auto-detect per model
-  --resume \                 # checkpoint per model/domain
-  --max-concurrent 1         # sequential GPU unload
+  --backend ollama \           # v1: Ollama only
+  --resume \                   # checkpoint per model/domain
+  --max-concurrent 1           # sequential GPU unload
 ```
 
 **Resource Management:**
@@ -489,6 +502,7 @@ python train_sft.py \
 ```
 
 **Evaluation Suite:**
+
 | Benchmark | Metric | Target |
 |-----------|--------|--------|
 | Domain QA (biochem, physics, law, coding, math) | Accuracy | > base model +10% |
@@ -586,7 +600,7 @@ Session 5 (Eval)    Session 6 (Graph Tools + MCP) ← needs Sessions 1-3
 ## Quick-Start Prompts for Each Session
 
 ### Session 1
-> Continue ModelReduce Session 1. Build `ModelProbe` with Ollama/HF/vLLM/API backends and domain prompt templates. Deliverable: `model_probe.py`, `probe_templates.py`. Verify: probe 10 biochem prompts on qwen2.5:14b.
+> Continue ModelReduce Session 1. Build `ModelProbe` with Ollama backend and domain prompt templates. Deliverable: `model_probe.py`, `probe_templates.py`. Verify: probe 10 biochem prompts on qwen2.5:14b.
 
 ### Session 2
 > Continue ModelReduce Session 2. Build `ModelDrop` + `CrossModelVerifier`. Cluster facts by Jaccard, count model agreement, integrate with lifecycle promotion. Deliverable: `model_drop.py`, `cross_model.py`. Verify: 2 models, 100 prompts, report verified/likely counts.
@@ -653,7 +667,8 @@ knowledgereduce/
 │
 ├── Dockerfile                        ◀── NEW (Session 8)
 ├── .github/workflows/model-reduce.yml ◀── NEW (Session 5/8)
-├── MODELREDUCE_SESSIONS.md           ◀── THIS FILE
+├── MODELREDUCE_SESSIONS.md           # Session tracker
+├── MODELREDUCE_MASTER_PLAN.md        # This file
 ├── pyproject.toml                    # Updated with model-reduce extra
 └── README.md                         # Updated with ModelReduce section
 ```
@@ -664,7 +679,7 @@ knowledgereduce/
 
 | Milestone | Metric | Target |
 |-----------|--------|--------|
-| Session 1 | Probe 10 prompts on 2 backends | ✓ No errors, structured output |
+| Session 1 | Probe 10 prompts on Ollama | ✓ No errors, structured output |
 | Session 2 | Cross-model verification | ✓ Agreement clusters, promotion works |
 | Session 3 | Distill → shards | ✓ 3 formats + manifest, CLI works |
 | Session 4 | Graveyard command | ✓ 5 models × 3 domains unattended |
@@ -694,7 +709,7 @@ knowledgereduce/
 
 ```bash
 cd /Users/nelslindahl/Hermes-Output/knowledgereduce
-# Create model_probe.py and probe_templates.py
+# Create knowledge_graph_pkg/probe_templates.py and model_probe.py
 # Test with: python -c "from knowledge_graph_pkg.model_probe import ModelProbe; ..."
 ```
 
