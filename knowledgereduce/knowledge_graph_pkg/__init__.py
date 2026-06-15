@@ -27,7 +27,14 @@ from .catalog import Catalog
 from .lifecycle import promote_reliability, find_contradictions, reextract_store
 from .factory import batch_drop, scan_folder
 
-__version__ = "2.0.0"
+try:  # single source of truth: version comes from package metadata (pyproject)
+    from importlib.metadata import version as _pkg_version, PackageNotFoundError
+    try:
+        __version__ = _pkg_version("knowledgereduce")
+    except PackageNotFoundError:  # not installed (e.g. raw source tree)
+        __version__ = "0.2.0"
+except ImportError:  # pragma: no cover - very old Python
+    __version__ = "0.2.0"
 __all__ = [
     'KnowledgeGraph',
     'ReliabilityRating',
