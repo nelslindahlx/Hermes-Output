@@ -150,3 +150,35 @@ def test_drop_is_idempotent_on_unchanged_source(tmp_path, sample_text, capsys):
 def test_drop_missing_input(tmp_path):
     rc = main(["drop", str(tmp_path / "nope.txt"), "--store", str(tmp_path / "s")])
     assert rc != 0
+
+
+# ---------- catalog + compile (read side) ----------
+
+def test_catalog_reports_stats(tmp_path, sample_text, capsys):
+    store = tmp_path / "store"
+    main(["drop", str(sample_text), "--store", str(store)])
+    rc = main(["catalog", "--store", str(store)])
+    assert rc == 0
+    out = capsys.readouterr().out.lower()
+    assert "total facts" in out and "total drops" in out
+
+
+def test_compile_builds_training_set(tmp_path, sample_text):
+    store = tmp_path / "store"
+    out = tmp_path / "train.jsonl"
+    main(["drop", str(sample_text), "--store", str(store)])
+    rc = main(["compile", "-o", str(out), "--store", str(store), "--format", "chat"])
+    assert rc == 0
+    import json
+    lines = [l for l in out.read_text().splitlines() if l.strip()]
+    assert lines
+    assert "messages" in json.loads(lines[0])
+
+
+def test_compile_with_split(tmp_path, sample_text):
+    store = tmp_path / "store"
+    out = tmp_path / "t.jsonl"
+    main(["drop", str(sample_text), "--store", str(store)])
+    rc = main(["compile", "-o", str(out), "--store", str(store), "--split", "0.5"])
+    assert rc == 0
+    assert out.exists() and (tmp_path / "t.jsonl.val").exists()

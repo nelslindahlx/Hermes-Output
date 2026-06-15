@@ -83,6 +83,33 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Minimum reliability to keep (default: likely_true).")
     p.add_argument("--force", action="store_true",
                    help="Write a drop even if this exact source was already ingested.")
+
+    c = sub.add_parser("catalog", help="Index the store and show stats / query facts.")
+    c.add_argument("--store", default="store", help="Knowledge store directory.")
+    c.add_argument("--source", help="Filter: facts from this source.")
+    c.add_argument("--reliability",
+                   choices=["UNVERIFIED", "POSSIBLY_TRUE", "LIKELY_TRUE", "VERIFIED"],
+                   help="Filter: minimum reliability label.")
+    c.add_argument("--category", help="Filter: facts in this category.")
+    c.add_argument("--min-quality", type=int, help="Filter: minimum quality score.")
+    c.add_argument("--limit", type=int, default=20, help="Max rows to print (default 20).")
+
+    cp = sub.add_parser("compile", help="Compile a training set from the store (a reproducible view).")
+    cp.add_argument("-o", "--output", required=True, help="Output file path.")
+    cp.add_argument("--store", default="store", help="Knowledge store directory.")
+    cp.add_argument("--format", choices=["chat", "instruction", "text"],
+                    default="chat", help="Output format (default: chat).")
+    cp.add_argument("--source", help="Filter: only facts from this source.")
+    cp.add_argument("--reliability",
+                    choices=["UNVERIFIED", "POSSIBLY_TRUE", "LIKELY_TRUE", "VERIFIED"],
+                    help="Filter: reliability label.")
+    cp.add_argument("--category", help="Filter: facts in this category.")
+    cp.add_argument("--min-quality", type=int, help="Filter: minimum quality score.")
+    cp.add_argument("--split", type=float, default=None,
+                    help="Train/val split ratio (writes <out> + <out>.val).")
+    cp.add_argument("--max-tokens", type=int, default=None,
+                    help="Cap output to ~N tokens (highest quality first).")
+    cp.add_argument("--seed", type=int, default=42, help="Split seed (default 42).")
     return parser
 
 
@@ -264,6 +291,99 @@ def _cmd_drop(args) -> int:
     return 0
 
 
+def _cmd_catalog(args) -> int:
+    import os
+    from .store import KnowledgeStore
+    from .catalog import Catalog
+    if not os.path.isdir(args.store):
+        print(f"error: store not found: {args.store}", file=sys.stderr)
+        return 2
+    store = KnowledgeStore(args.store)
+    cat = Catalog(os.path.join(args.store, "catalog.db"))
+    cat.rebuild(store)
+
+    any_filter = any([args.source, args.reliability, args.category, args.min_quality])
+    if any_filter:
+        rows = cat.query(source=args.source, reliability=args.reliability,
+                         category=args.category, min_quality=args.min_quality,
+                         limit=args.limit)
+        print(f"{len(rows)} matching facts (showing up to {args.limit}):")
+        for r in rows:
+            print(f"  [{r['reliability']}/{r['quality']}] {r['statement']}  <- {r['source']}")
+    else:
+        s = cat.stats()
+        print("Knowledge store catalog")
+        print(f"  total facts: {s['total_facts']}")
+        print(f"  total drops: {s['total_drops']}")
+        print(f"  sources:     {s['sources']}")
+        print("  by reliability:")
+        for rel, n in sorted(s["by_reliability"].items()):
+            print(f"    {rel}: {n}")
+    cat.close()
+    return 0
+
+
+def _row_to_record(row, fmt):
+    """Turn a catalog row into a serialized record line for the given format."""
+    import json as _json
+    q = row.get("question") or f"Tell me a fact about {row.get('category') or 'General'}."
+    a = row.get("answer") or row.get("statement") or ""
+    if fmt == "chat":
+        return _json.dumps({"messages": [
+            {"role": "user", "content": q},
+            {"role": "assistant", "content": a},
+        ]}, ensure_ascii=False)
+    if fmt == "instruction":
+        return _json.dumps({"instruction": q, "input": "", "output": a}, ensure_ascii=False)
+    # text
+    return f"- {row.get('statement') or a}"
+
+
+def _cmd_compile(args) -> int:
+    import os
+    from .store import KnowledgeStore
+    from .catalog import Catalog
+    if not os.path.isdir(args.store):
+        print(f"error: store not found: {args.store}", file=sys.stderr)
+        return 2
+
+    store = KnowledgeStore(args.store)
+    cat = Catalog(os.path.join(args.store, "catalog.db"))
+    cat.rebuild(store)
+
+    rows = cat.query(source=args.source, reliability=args.reliability,
+                     category=args.category, min_quality=args.min_quality)
+    records = [_row_to_record(r, args.format) for r in rows]
+    drops_used = sorted({r["drop_id"] for r in rows})
+    cat.close()
+
+    if args.max_tokens is not None:
+        from .export import budget_records
+        records = budget_records(records, args.max_tokens)
+
+    def _write(path, lines):
+        with open(path, "w", encoding="utf-8") as fh:
+            for ln in lines:
+                fh.write(ln + "\n")
+
+    if args.split is not None:
+        from .export import split_records
+        train, val = split_records(records, ratio=args.split, seed=args.seed)
+        _write(args.output, train)
+        _write(args.output + ".val", val)
+        print(
+            f"Compiled {len(records)} facts from {len(drops_used)} drop(s) -> "
+            f"{len(train)} train ({args.output}) + {len(val)} val ({args.output}.val)."
+        )
+    else:
+        _write(args.output, records)
+        print(
+            f"Compiled {len(records)} facts from {len(drops_used)} drop(s) -> "
+            f"{args.output} (format {args.format})."
+        )
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entrypoint. Returns a process exit code."""
     parser = _build_parser()
@@ -274,6 +394,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _cmd_eval(args)
     if args.command == "drop":
         return _cmd_drop(args)
+    if args.command == "catalog":
+        return _cmd_catalog(args)
+    if args.command == "compile":
+        return _cmd_compile(args)
     parser.print_help()
     return 1
 
