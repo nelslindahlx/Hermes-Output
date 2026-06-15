@@ -1,8 +1,40 @@
-# KnowledgeReduce Ultimate
+# KnowledgeReduce
 
-A comprehensive knowledge graph framework with advanced capabilities for creating, managing, and analyzing knowledge graphs with cutting-edge features.
+![CI](https://github.com/nelslindahlx/Hermes-Output/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-## Advanced Features
+**Distill documents into compact, reliability-rated, model-absorbable
+knowledge facts** — the "reduce" in KnowledgeReduce.
+
+Point it at text (or HTML/Markdown/PDF), and it extracts facts, attributes
+pronouns, filters out noise, ranks by quality, deduplicates, and emits
+fine-tuning-ready JSONL or a RAG-ready digest. The core is pure-Python and
+dependency-light (just `networkx`); spaCy and PDF support are opt-in extras.
+
+```bash
+pip install -e .
+knowledgereduce distill article.html -o train.jsonl --format chat --coref
+```
+
+### Pipeline
+
+```
+document (txt/md/html/pdf)
+   -> ingest        load_text()
+   -> extract       SVOExtractor (default) | spaCy (opt-in)  [+ coreference]
+   -> knowledge graph  reliability-rated facts + Q&A
+   -> filter        FactQualityFilter (standard | strict)
+   -> distill       dedup -> rank by quality -> top_k / token budget
+   -> export        chat JSONL | instruction JSONL | text digest  [+ train/val split]
+```
+
+Quality is measured, not guessed: `knowledgereduce eval` scores the
+extractor against a labeled gold set (current SVO baseline **F1 0.857**).
+
+---
+
+## Advanced Features (knowledge-graph core)
 
 ### Core Functionality
 - Create and manage knowledge graphs with reliability ratings
