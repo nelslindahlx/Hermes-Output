@@ -278,6 +278,23 @@ scope** for this package, which targets a fast, portable, zero-dependency
 baseline. `data/civic_honors_distilled.jsonl` is the committed demo output
 (standard filter) so you can inspect real results without running anything.
 
+## Evaluation
+
+Extraction quality is measured against a hand-labeled gold set
+(`data/gold_set.json`) — sentences paired with the triples a correct
+extractor should produce, including negative examples (headers/fragments
+that should yield nothing). Matching is lenient (case-insensitive
+substring on subject/object, predicate-family aware).
+
+```bash
+knowledgereduce eval                       # uses data/gold_set.json
+knowledgereduce eval --gold mygold.json
+```
+
+**Current SVO baseline:** precision 0.80, recall 0.92, **F1 0.857**
+(15 items). This is the number future extractor changes are measured
+against — chase F1, don't eyeball.
+
 ## Testing
 
 ```bash

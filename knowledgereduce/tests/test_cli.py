@@ -80,3 +80,10 @@ def test_stats_printed(tmp_path, sample_text, capsys):
     captured = capsys.readouterr()
     # CLI reports how many facts/pairs were written
     assert "fact" in captured.out.lower() or "pair" in captured.out.lower()
+
+
+def test_eval_subcommand_reports_f1(capsys):
+    rc = main(["eval", "--gold", "data/gold_set.json"])
+    assert rc == 0
+    out = capsys.readouterr().out.lower()
+    assert "f1" in out and "precision" in out and "recall" in out

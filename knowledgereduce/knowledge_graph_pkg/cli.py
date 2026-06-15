@@ -46,6 +46,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    choices=["unverified", "possibly_true", "likely_true", "verified"],
                    default="likely_true",
                    help="Minimum reliability to keep (default: likely_true).")
+
+    e = sub.add_parser("eval", help="Score the extractor against a gold set.")
+    e.add_argument("--gold", default="data/gold_set.json",
+                   help="Path to the gold-set JSON (default: data/gold_set.json).")
     return parser
 
 
@@ -98,12 +102,26 @@ def _cmd_distill(args) -> int:
     return 0
 
 
+def _cmd_eval(args) -> int:
+    import os
+    from .evaluation import load_gold_set, evaluate, format_report
+    from .extraction import SVOExtractor
+    if not os.path.isfile(args.gold):
+        print(f"error: gold set not found: {args.gold}", file=sys.stderr)
+        return 2
+    report = evaluate(SVOExtractor(), load_gold_set(args.gold))
+    print(format_report(report))
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entrypoint. Returns a process exit code."""
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.command == "distill":
         return _cmd_distill(args)
+    if args.command == "eval":
+        return _cmd_eval(args)
     parser.print_help()
     return 1
 
