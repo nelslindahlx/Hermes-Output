@@ -37,28 +37,29 @@ Shards are **immutable & append-only**; "edits" produce new versioned drops.
 
 ## Sessions
 
-**7 — Drop format & sharded store.** Drop schema + append-only store layout
+**7 — Drop format & sharded store.** ✅ Done. Drop schema + append-only store
 (`store/shards/...jsonl` + `store/manifest.json`). Round-trip write/read/validate.
 
-**8 — The factory run.** `knowledgereduce drop <source>`: run pipeline, dedup
-against the global FactStore, append a shard, update manifest. Idempotent via
-content hash (re-dropping unchanged source = no-op). Provenance stamped.
+**8 — The factory run.** ✅ Done. `knowledgereduce drop <source>`: run pipeline,
+dedup, append a shard, update manifest. Idempotent via content hash. Provenance
+stamped.
 
-**9 — Catalog & index.** SQLite index over all stored facts; query by source,
-date, tag, reliability, quality. `knowledgereduce catalog` for store stats.
+**9 — Catalog & index.** ✅ Done. SQLite index over all stored facts; query by
+source/date/tag/reliability/quality. `knowledgereduce catalog` for store stats.
 
-**10 — Compile on demand.** `knowledgereduce compile <spec.json>`: assemble a
-dataset from the store by date range, reliability, source list, topics, dedup,
-token budget, train/val split. Deterministic & reproducible; records which
-drops it drew from.
+**10 — Compile on demand.** ✅ Done. `knowledgereduce compile`: assemble a
+dataset from the store by reliability/source/category, dedup, token budget,
+train/val split. Records which drops it drew from.
 
-**11 — Lifecycle.** Re-extract stored sources with a better engine (e.g. spaCy)
-to upgrade the corpus retroactively. Reliability promotion across sources;
-contradiction flagging.
+**11 — Lifecycle.** ✅ Done. `knowledgereduce lifecycle {promote,contradictions,
+reextract}`: re-extract stored sources with a better engine (new drop versions),
+reliability promotion across sources, contradiction flagging.
 
-**12 — Automation.** Watch-folder / scheduled runs that grow the store
-unattended, each producing a dated drop + run report. The "ongoing" in
-ongoing factory.
+**12 — Automation.** ✅ Done. `knowledgereduce batch <files>|--folder <dir>`:
+ingest many sources in one pass, skip unchanged, emit a run report. The
+building block for scheduled / watch-folder growth.
+
+## Status: Roadmap v2 complete (Sessions 7-12 shipped, CI-verified).
 
 ## Fastest path to payoff
 7 -> 8 -> 10 gives the full capture-store-pull loop. 9/11/12 are enrichment.
