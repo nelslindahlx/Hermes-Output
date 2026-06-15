@@ -199,8 +199,18 @@ Generated chat records use **real questions** derived from the relation
 
 ### Ingesting documents from disk
 
+`create_facts_from_file()` (and the CLI) dispatch on file extension:
+`.txt` as-is, `.md` strips Markdown, `.html`/`.htm` extracts body text
+(including Substack `body_html` JSON), and `.pdf` via the optional
+`[pdf]` extra.
+
 ```python
-skg.create_facts_from_file("source.txt", reliability=ReliabilityRating.LIKELY_TRUE)
+skg.create_facts_from_file("source.html", reliability=ReliabilityRating.LIKELY_TRUE)
+skg.create_facts_from_file("paper.pdf")   # requires: pip install knowledgereduce[pdf]
+```
+
+```bash
+knowledgereduce distill article.html -o train.jsonl --format chat
 ```
 
 ## Extraction Quality & Limitations (heuristic baseline)

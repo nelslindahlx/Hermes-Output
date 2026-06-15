@@ -331,12 +331,17 @@ class SemanticKnowledgeGraph:
         """
         Read a text document from disk and create facts from its contents.
 
+        The file is loaded via :func:`knowledge_graph_pkg.ingest.load_text`,
+        which dispatches on extension: ``.txt`` as-is, ``.md`` strips
+        markup, ``.html`` extracts body text (incl. Substack body_html), and
+        ``.pdf`` uses the optional ``[pdf]`` extra.
+
         Args:
-            path: Path to a UTF-8 text file to ingest.
+            path: Path to a document (.txt/.md/.html/.pdf).
             source_id: Source identifier for the created facts. Defaults to
                 the file's base name when not provided.
             reliability: Reliability rating for the extracted facts.
-            encoding: Text encoding to read the file with.
+            encoding: Text encoding to read text-based files with.
             resolve_coref: Forwarded to create_facts_from_text; resolve
                 leading subject pronouns before extraction.
 
@@ -344,10 +349,10 @@ class SemanticKnowledgeGraph:
             List of created fact IDs.
         """
         import os
+        from .ingest import load_text
         if source_id is None:
             source_id = os.path.splitext(os.path.basename(path))[0]
-        with open(path, "r", encoding=encoding) as fh:
-            text = fh.read()
+        text = load_text(path, encoding=encoding)
         return self.create_facts_from_text(text, source_id=source_id,
                                            reliability=reliability,
                                            resolve_coref=resolve_coref)

@@ -18,6 +18,7 @@ from .qa import QAGenerator
 from .coref import resolve_coreferences
 from .extraction import SVOExtractor
 from .quality import FactQualityFilter
+from .ingest import load_text
 
 __version__ = "2.0.0"
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     'QAGenerator',
     'resolve_coreferences',
     'SVOExtractor',
-    'FactQualityFilter'
+    'FactQualityFilter',
+    'load_text'
 ]
