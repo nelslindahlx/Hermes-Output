@@ -146,6 +146,36 @@ tx_hash = blockchain_kg.add_fact(
 verification = blockchain_kg.verify_fact("blockchain_fact_1")
 ```
 
+## Knowledge Factory (ongoing capture → store → compile)
+
+Beyond one-shot distillation, KnowledgeReduce can run as an **ongoing
+factory**: every ingestion effort produces a durable, provenance-stamped
+**drop** (a shard) appended to a store. Drops accumulate over time;
+training sets are **compiled on demand** as reproducible views over the
+store. See `docs/ROADMAP-v2.md` for the design.
+
+```bash
+# 1. DROP: ingest a source -> one immutable shard per effort (idempotent)
+knowledgereduce drop article.html --store store
+knowledgereduce drop paper.pdf    --store store   # accumulates
+
+# 2. CATALOG: build a SQLite index and inspect the store
+knowledgereduce catalog --store store
+knowledgereduce catalog --store store --min-quality 60 --reliability VERIFIED
+
+# 3. COMPILE: assemble a training set as a reproducible view
+knowledgereduce compile -o train.jsonl --store store --format chat --split 0.9
+knowledgereduce compile -o ctx.jsonl   --store store --max-tokens 2000 --category Science
+```
+
+- **Drops are immutable & append-only** — each carries provenance (source,
+  content hash, timestamp) and lineage (engine, filter, coref, schema
+  version) plus the raw source text, so facts can be re-extracted later
+  when the extractor improves.
+- **Idempotent**: re-dropping an unchanged source is skipped (content hash).
+- **The store is the durable asset**; `train.jsonl` is just a view you can
+  regenerate. Compilation records which drops it drew from.
+
 ## Installation
 
 ```bash
