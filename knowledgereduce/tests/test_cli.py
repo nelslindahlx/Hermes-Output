@@ -120,3 +120,33 @@ def test_max_tokens_limits_output(tmp_path, sample_text):
     # tiny budget -> at most a couple of short records
     lines = [l for l in out.read_text().splitlines() if l.strip()]
     assert len(lines) <= 2
+
+
+# ---------- drop subcommand (knowledge factory) ----------
+
+def test_drop_creates_shard_in_store(tmp_path, sample_text):
+    store = tmp_path / "store"
+    rc = main(["drop", str(sample_text), "--store", str(store)])
+    assert rc == 0
+    assert (store / "manifest.json").exists()
+    import json
+    manifest = json.loads((store / "manifest.json").read_text())
+    assert len(manifest["drops"]) == 1
+    assert manifest["drops"][0]["num_facts"] > 0
+
+
+def test_drop_is_idempotent_on_unchanged_source(tmp_path, sample_text, capsys):
+    store = tmp_path / "store"
+    main(["drop", str(sample_text), "--store", str(store)])
+    rc = main(["drop", str(sample_text), "--store", str(store)])
+    assert rc == 0
+    import json
+    manifest = json.loads((store / "manifest.json").read_text())
+    # second identical run must NOT add a new drop
+    assert len(manifest["drops"]) == 1
+    assert "skip" in capsys.readouterr().out.lower()
+
+
+def test_drop_missing_input(tmp_path):
+    rc = main(["drop", str(tmp_path / "nope.txt"), "--store", str(tmp_path / "s")])
+    assert rc != 0

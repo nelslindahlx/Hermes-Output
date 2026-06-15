@@ -22,6 +22,7 @@ from .quality import FactQualityFilter
 from .ingest import load_text
 from .export import split_records, budget_records, estimate_tokens
 from .factstore import FactStore
+from .store import KnowledgeStore, Drop, content_hash, SCHEMA_VERSION
 
 __version__ = "2.0.0"
 __all__ = [
@@ -44,5 +45,9 @@ __all__ = [
     'split_records',
     'budget_records',
     'estimate_tokens',
-    'FactStore'
+    'FactStore',
+    'KnowledgeStore',
+    'Drop',
+    'content_hash',
+    'SCHEMA_VERSION'
 ]

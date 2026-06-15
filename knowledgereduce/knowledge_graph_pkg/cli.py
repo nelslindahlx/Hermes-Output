@@ -62,6 +62,27 @@ def _build_parser() -> argparse.ArgumentParser:
     e = sub.add_parser("eval", help="Score the extractor against a gold set.")
     e.add_argument("--gold", default="data/gold_set.json",
                    help="Path to the gold-set JSON (default: data/gold_set.json).")
+
+    p = sub.add_parser("drop", help="Ingest a source into the knowledge store (one drop per effort).")
+    p.add_argument("input", help="Path to the input document.")
+    p.add_argument("--store", default="store",
+                   help="Knowledge store directory (default: store).")
+    p.add_argument("--filter", choices=["none", "standard", "strict"],
+                   default="standard", help="Quality filter (default: standard).")
+    p.add_argument("--coref", action="store_true",
+                   help="Resolve leading pronouns before extraction.")
+    p.add_argument("--engine", choices=["svo", "spacy"], default="svo",
+                   help="Extraction engine (default: svo).")
+    p.add_argument("--max-object-len", type=int, default=80,
+                   help="Max object length for the quality filter (default: 80).")
+    p.add_argument("--dedup", type=float, default=0.9,
+                   help="Dedup similarity threshold 0..1 (default: 0.9).")
+    p.add_argument("--min-reliability",
+                   choices=["unverified", "possibly_true", "likely_true", "verified"],
+                   default="likely_true",
+                   help="Minimum reliability to keep (default: likely_true).")
+    p.add_argument("--force", action="store_true",
+                   help="Write a drop even if this exact source was already ingested.")
     return parser
 
 
@@ -179,6 +200,70 @@ def _cmd_eval(args) -> int:
     return 0
 
 
+def _cmd_drop(args) -> int:
+    import os
+    from .ingest import load_text
+    from .store import KnowledgeStore, Drop, content_hash
+
+    if not os.path.isfile(args.input):
+        print(f"error: input file not found: {args.input}", file=sys.stderr)
+        return 2
+
+    text = load_text(args.input)
+    src_hash = content_hash(text)
+    store = KnowledgeStore(args.store)
+
+    # Idempotency: skip if this exact source content was already dropped.
+    if not args.force and store.has_source_hash(src_hash):
+        print(f"skip: source already ingested (hash {src_hash[:12]}); use --force to re-drop.")
+        return 0
+
+    reliability = _RELIABILITY[args.min_reliability]
+
+    extractor = None
+    if args.engine != "svo":
+        from .extractor_base import get_extractor
+        try:
+            extractor = get_extractor(args.engine)
+        except ImportError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 3
+
+    kg = KnowledgeGraph()
+    skg = SemanticKnowledgeGraph(kg)
+    skg.create_facts_from_text(text, source_id=os.path.basename(args.input),
+                               reliability=reliability, resolve_coref=args.coref,
+                               extractor=extractor)
+
+    quality_filter = _make_filter(args.filter, args.max_object_len)
+    distiller = KnowledgeDistiller(kg, min_reliability=reliability,
+                                   dedup_threshold=args.dedup,
+                                   quality_filter=quality_filter)
+    facts = distiller.select_facts()
+
+    # Build a deterministic drop id from source basename + hash prefix.
+    base = os.path.splitext(os.path.basename(args.input))[0]
+    drop_id = f"{base}-{src_hash[:12]}"
+
+    drop = Drop(
+        drop_id=drop_id,
+        source=args.input,
+        source_hash=src_hash,
+        facts=facts,
+        engine=args.engine,
+        filter_name=args.filter,
+        coref=args.coref,
+        source_text=text,
+    )
+    shard = store.write_drop(drop)
+    print(
+        f"Dropped {len(facts)} facts from {args.input} -> {shard} "
+        f"(store now has {store.stats()['total_drops']} drops, "
+        f"{store.stats()['total_facts']} facts)."
+    )
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entrypoint. Returns a process exit code."""
     parser = _build_parser()
@@ -187,6 +272,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _cmd_distill(args)
     if args.command == "eval":
         return _cmd_eval(args)
+    if args.command == "drop":
+        return _cmd_drop(args)
     parser.print_help()
     return 1
 
