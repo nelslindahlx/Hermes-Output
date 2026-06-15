@@ -17,6 +17,7 @@ from .distillation import KnowledgeDistiller
 from .qa import QAGenerator
 from .coref import resolve_coreferences
 from .extraction import SVOExtractor
+from .extractor_base import Extractor, get_extractor
 from .quality import FactQualityFilter
 from .ingest import load_text
 
@@ -35,5 +36,7 @@ __all__ = [
     'resolve_coreferences',
     'SVOExtractor',
     'FactQualityFilter',
-    'load_text'
+    'load_text',
+    'Extractor',
+    'get_extractor'
 ]

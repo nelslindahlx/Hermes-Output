@@ -228,7 +228,7 @@ class SemanticKnowledgeGraph:
                 statement += '.'
         return statement
     
-    def create_facts_from_text(self, text: str, source_id: str, reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED, resolve_coref: bool = False, use_svo: bool = True) -> List[str]:
+    def create_facts_from_text(self, text: str, source_id: str, reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED, resolve_coref: bool = False, use_svo: bool = True, extractor=None) -> List[str]:
         """
         Automatically create facts from text using NLP extraction.
 
@@ -255,7 +255,9 @@ class SemanticKnowledgeGraph:
             text = resolve_coreferences(text)
 
         # Extract relations using the chosen extractor.
-        if use_svo:
+        if extractor is not None:
+            relations = extractor.extract(text)
+        elif use_svo:
             relations = self._svo_extractor.extract(text)
         else:
             relations = self.extract_relations_from_text(text)
@@ -327,7 +329,8 @@ class SemanticKnowledgeGraph:
 
     def create_facts_from_file(self, path: str, source_id: Optional[str] = None,
                                reliability: ReliabilityRating = ReliabilityRating.UNVERIFIED,
-                               encoding: str = "utf-8", resolve_coref: bool = False) -> List[str]:
+                               encoding: str = "utf-8", resolve_coref: bool = False,
+                               extractor=None) -> List[str]:
         """
         Read a text document from disk and create facts from its contents.
 
@@ -355,7 +358,8 @@ class SemanticKnowledgeGraph:
         text = load_text(path, encoding=encoding)
         return self.create_facts_from_text(text, source_id=source_id,
                                            reliability=reliability,
-                                           resolve_coref=resolve_coref)
+                                           resolve_coref=resolve_coref,
+                                           extractor=extractor)
     
     def find_semantically_similar_facts(self, fact_id: str, threshold: float = 0.5) -> List[Tuple[str, float]]:
         """

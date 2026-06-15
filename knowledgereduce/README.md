@@ -273,10 +273,24 @@ the better choice. **Match the filter to the text.**
 ### Beyond the heuristic ceiling
 
 To materially improve quality on hard text you would add dependency
-parsing (spaCy) or LLM-based extraction. Both are deliberately **out of
-scope** for this package, which targets a fast, portable, zero-dependency
-baseline. `data/civic_honors_distilled.jsonl` is the committed demo output
-(standard filter) so you can inspect real results without running anything.
+parsing (spaCy) or LLM-based extraction. The package ships a **pluggable
+extractor interface** so engines are swappable behind one API:
+
+```python
+from knowledge_graph_pkg import get_extractor
+ex = get_extractor("svo")     # default, pure-Python (always available)
+ex = get_extractor("spacy")   # dependency-parse backend, needs [nlp] extra
+```
+
+```bash
+pip install knowledgereduce[nlp]
+python -m spacy download en_core_web_sm
+knowledgereduce distill input.txt -o train.jsonl --engine spacy
+```
+
+The pure-Python `svo` engine stays the default and the only required path;
+`spacy` is opt-in. Score any engine against the gold set with
+`knowledgereduce eval` to compare F1.
 
 ## Evaluation
 

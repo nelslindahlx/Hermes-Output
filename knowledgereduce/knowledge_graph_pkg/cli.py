@@ -38,6 +38,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    default="standard", help="Quality filter (default: standard).")
     d.add_argument("--coref", action="store_true",
                    help="Resolve leading pronouns to named-entity antecedents.")
+    d.add_argument("--engine", choices=["svo", "spacy"], default="svo",
+                   help="Extraction engine (default: svo; spacy needs [nlp] extra).")
     d.add_argument("--max-object-len", type=int, default=80,
                    help="Max object length for the quality filter (default: 80).")
     d.add_argument("--dedup", type=float, default=0.9,
@@ -78,10 +80,21 @@ def _cmd_distill(args) -> int:
 
     reliability = _RELIABILITY[args.min_reliability]
 
+    # Resolve the extraction engine (svo default; spacy needs the [nlp] extra).
+    extractor = None
+    if getattr(args, "engine", "svo") != "svo":
+        from .extractor_base import get_extractor
+        try:
+            extractor = get_extractor(args.engine)
+        except ImportError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 3
+
     kg = KnowledgeGraph()
     skg = SemanticKnowledgeGraph(kg)
     ids = skg.create_facts_from_file(
-        args.input, reliability=reliability, resolve_coref=args.coref
+        args.input, reliability=reliability, resolve_coref=args.coref,
+        extractor=extractor,
     )
 
     quality_filter = _make_filter(args.filter, args.max_object_len)
