@@ -48,6 +48,16 @@ def _build_parser() -> argparse.ArgumentParser:
                    choices=["unverified", "possibly_true", "likely_true", "verified"],
                    default="likely_true",
                    help="Minimum reliability to keep (default: likely_true).")
+    d.add_argument("--split", type=float, default=None,
+                   help="Train/val split ratio (e.g. 0.9). Writes <out> and "
+                        "<out>.val. Default: no split.")
+    d.add_argument("--max-tokens", type=int, default=None,
+                   help="Cap output to ~N tokens (keeps highest-ranked facts).")
+    d.add_argument("--dedup-store", default=None,
+                   help="Path to a persistent fact store JSON for cross-run "
+                        "dedup (skips facts seen in previous runs).")
+    d.add_argument("--seed", type=int, default=42,
+                   help="Random seed for the train/val split (default: 42).")
 
     e = sub.add_parser("eval", help="Score the extractor against a gold set.")
     e.add_argument("--gold", default="data/gold_set.json",
@@ -105,13 +115,55 @@ def _cmd_distill(args) -> int:
         quality_filter=quality_filter,
     )
 
-    written = distiller.distill_to_file(args.output, fmt=args.format)
-    stats = distiller.stats()
-    print(
-        f"Extracted {len(ids)} raw facts; "
-        f"wrote {written} {args.format} pairs to {args.output} "
-        f"(reduction ratio {stats['reduction_ratio']:.2f})."
-    )
+    # Build serialized records (one per selected fact).
+    serializer = {
+        "chat": distiller.to_chat_jsonl,
+        "instruction": distiller.to_instruction_jsonl,
+        "text": distiller.to_text,
+    }[args.format]
+    selected = distiller.select_facts()
+    records = [line for line in serializer().splitlines() if line.strip()]
+
+    # Cross-run dedup via a persistent fact store (by fact statement).
+    if args.dedup_store:
+        from .factstore import FactStore
+        store = FactStore(path=args.dedup_store).load()
+        kept_records = []
+        for fact, rec in zip(selected, records):
+            if store.add(fact.get("fact_statement", rec)):
+                kept_records.append(rec)
+        records = kept_records
+        store.save()
+
+    # Token budget: keep the highest-ranked records that fit.
+    if args.max_tokens is not None:
+        from .export import budget_records
+        records = budget_records(records, args.max_tokens)
+
+    def _write(path, lines):
+        with open(path, "w", encoding="utf-8") as fh:
+            for ln in lines:
+                fh.write(ln + "\n")
+
+    # Optional train/val split.
+    if args.split is not None:
+        from .export import split_records
+        train, val = split_records(records, ratio=args.split, seed=args.seed)
+        val_path = args.output + ".val"
+        _write(args.output, train)
+        _write(val_path, val)
+        print(
+            f"Extracted {len(ids)} raw facts; wrote {len(train)} train -> "
+            f"{args.output} and {len(val)} val -> {val_path}."
+        )
+    else:
+        _write(args.output, records)
+        stats = distiller.stats()
+        print(
+            f"Extracted {len(ids)} raw facts; "
+            f"wrote {len(records)} {args.format} pairs to {args.output} "
+            f"(reduction ratio {stats['reduction_ratio']:.2f})."
+        )
     return 0
 
 

@@ -143,7 +143,22 @@ knowledgereduce distill input.txt -o train.jsonl --filter strict
 Also runnable as a module: `python -m knowledge_graph_pkg distill ...`.
 
 Flags: `--format {chat,instruction,text}`, `--filter {none,standard,strict}`,
-`--coref`, `--dedup <0..1>`, `--max-object-len <n>`, `--min-reliability <level>`.
+`--coref`, `--engine {svo,spacy}`, `--dedup <0..1>`, `--max-object-len <n>`,
+`--min-reliability <level>`.
+
+### Training-data export options
+
+```bash
+# Train/validation split -> writes train.jsonl + train.jsonl.val
+knowledgereduce distill input.txt -o train.jsonl --split 0.9
+
+# Token budget: keep only the highest-ranked facts that fit ~2000 tokens
+knowledgereduce distill input.txt -o ctx.jsonl --max-tokens 2000
+
+# Cross-run dedup: skip facts already emitted in earlier runs
+knowledgereduce distill doc1.txt -o out.jsonl --dedup-store seen.json
+knowledgereduce distill doc2.txt -o out.jsonl --dedup-store seen.json
+```
 
 ## Knowledge Distillation (the "reduce" step)
 

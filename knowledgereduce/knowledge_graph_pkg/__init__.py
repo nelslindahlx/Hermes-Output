@@ -20,6 +20,8 @@ from .extraction import SVOExtractor
 from .extractor_base import Extractor, get_extractor
 from .quality import FactQualityFilter
 from .ingest import load_text
+from .export import split_records, budget_records, estimate_tokens
+from .factstore import FactStore
 
 __version__ = "2.0.0"
 __all__ = [
@@ -38,5 +40,9 @@ __all__ = [
     'FactQualityFilter',
     'load_text',
     'Extractor',
-    'get_extractor'
+    'get_extractor',
+    'split_records',
+    'budget_records',
+    'estimate_tokens',
+    'FactStore'
 ]

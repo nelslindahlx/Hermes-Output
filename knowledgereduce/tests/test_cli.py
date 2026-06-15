@@ -87,3 +87,36 @@ def test_eval_subcommand_reports_f1(capsys):
     assert rc == 0
     out = capsys.readouterr().out.lower()
     assert "f1" in out and "precision" in out and "recall" in out
+
+
+def test_split_writes_train_and_val(tmp_path, sample_text):
+    out = tmp_path / "train.jsonl"
+    rc = main(["distill", str(sample_text), "-o", str(out),
+               "--format", "chat", "--split", "0.5"])
+    assert rc == 0
+    assert out.exists()
+    assert (tmp_path / "train.jsonl.val").exists()
+
+
+def test_dedup_store_skips_seen_on_second_run(tmp_path, sample_text):
+    out = tmp_path / "t.jsonl"
+    store = tmp_path / "seen.json"
+    main(["distill", str(sample_text), "-o", str(out),
+          "--format", "chat", "--dedup-store", str(store)])
+    first = len([l for l in out.read_text().splitlines() if l.strip()])
+    assert first > 0
+    # Second run with the same store should emit nothing new.
+    main(["distill", str(sample_text), "-o", str(out),
+          "--format", "chat", "--dedup-store", str(store)])
+    second = len([l for l in out.read_text().splitlines() if l.strip()])
+    assert second == 0
+
+
+def test_max_tokens_limits_output(tmp_path, sample_text):
+    out = tmp_path / "t.jsonl"
+    rc = main(["distill", str(sample_text), "-o", str(out),
+               "--format", "chat", "--max-tokens", "5"])
+    assert rc == 0
+    # tiny budget -> at most a couple of short records
+    lines = [l for l in out.read_text().splitlines() if l.strip()]
+    assert len(lines) <= 2
