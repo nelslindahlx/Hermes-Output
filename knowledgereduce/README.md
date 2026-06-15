@@ -114,6 +114,37 @@ tx_hash = blockchain_kg.add_fact(
 verification = blockchain_kg.verify_fact("blockchain_fact_1")
 ```
 
+## Installation
+
+```bash
+pip install -e .                # core (pure-Python, just networkx)
+pip install -e ".[ingest,pdf]"  # + HTML/PDF document ingestion
+pip install -e ".[dev]"         # + pytest for development
+```
+
+## Command-line usage
+
+After install, distill any document into training data with one command:
+
+```bash
+# Chat fine-tuning JSONL, with coreference resolution and quality filtering
+knowledgereduce distill input.txt -o train.jsonl --format chat --coref
+
+# Instruction-tuning JSONL
+knowledgereduce distill input.txt -o instruct.jsonl --format instruction
+
+# Plain-text ranked digest (RAG context)
+knowledgereduce distill input.txt -o digest.txt --format text
+
+# Stricter quality filter (entity subjects only) for entity-rich prose
+knowledgereduce distill input.txt -o train.jsonl --filter strict
+```
+
+Also runnable as a module: `python -m knowledge_graph_pkg distill ...`.
+
+Flags: `--format {chat,instruction,text}`, `--filter {none,standard,strict}`,
+`--coref`, `--dedup <0..1>`, `--max-object-len <n>`, `--min-reliability <level>`.
+
 ## Knowledge Distillation (the "reduce" step)
 
 KnowledgeReduce can distill a populated knowledge graph into compact,
