@@ -28,6 +28,7 @@ classifiers = [
 # Core stays light and dependency-minimal on purpose.
 dependencies = [
     "networkx>=2.5",
+    "numpy>=1.19.0",
 ]
 
 [project.optional-dependencies]
