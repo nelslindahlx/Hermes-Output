@@ -24,6 +24,8 @@ from .export import split_records, budget_records, estimate_tokens
 from .factstore import FactStore
 from .store import KnowledgeStore, Drop, content_hash, SCHEMA_VERSION
 from .catalog import Catalog
+from .lifecycle import promote_reliability, find_contradictions, reextract_store
+from .factory import batch_drop, scan_folder
 
 __version__ = "2.0.0"
 __all__ = [
@@ -51,5 +53,10 @@ __all__ = [
     'Drop',
     'content_hash',
     'SCHEMA_VERSION',
-    'Catalog'
+    'Catalog',
+    'promote_reliability',
+    'find_contradictions',
+    'reextract_store',
+    'batch_drop',
+    'scan_folder'
 ]

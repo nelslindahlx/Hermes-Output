@@ -182,3 +182,34 @@ def test_compile_with_split(tmp_path, sample_text):
     rc = main(["compile", "-o", str(out), "--store", str(store), "--split", "0.5"])
     assert rc == 0
     assert out.exists() and (tmp_path / "t.jsonl.val").exists()
+
+
+# ---------- batch + lifecycle (automation + corpus upkeep) ----------
+
+def test_batch_ingests_folder(tmp_path):
+    (tmp_path / "a.txt").write_text("Robert Putnam wrote Bowling Alone.")
+    (tmp_path / "b.txt").write_text("Marie Curie was born in Warsaw.")
+    store = tmp_path / "store"
+    rc = main(["batch", "--folder", str(tmp_path), "--store", str(store)])
+    assert rc == 0
+    import json
+    manifest = json.loads((store / "manifest.json").read_text())
+    assert len(manifest["drops"]) == 2
+
+
+def test_lifecycle_contradictions_runs(tmp_path, capsys):
+    a = tmp_path / "a.txt"; a.write_text("Robert Putnam wrote Bowling Alone.")
+    store = tmp_path / "store"
+    main(["drop", str(a), "--store", str(store)])
+    rc = main(["lifecycle", "contradictions", "--store", str(store)])
+    assert rc == 0
+    assert "contradiction" in capsys.readouterr().out.lower()
+
+
+def test_lifecycle_reextract_runs(tmp_path, capsys):
+    a = tmp_path / "a.txt"; a.write_text("Marie Curie discovered radium.")
+    store = tmp_path / "store"
+    main(["drop", str(a), "--store", str(store)])
+    rc = main(["lifecycle", "reextract", "--store", str(store)])
+    assert rc == 0
+    assert "re-extraction" in capsys.readouterr().out.lower()

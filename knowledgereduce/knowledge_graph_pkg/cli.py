@@ -110,6 +110,24 @@ def _build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--max-tokens", type=int, default=None,
                     help="Cap output to ~N tokens (highest quality first).")
     cp.add_argument("--seed", type=int, default=42, help="Split seed (default 42).")
+
+    b = sub.add_parser("batch", help="Drop many sources (or a folder) into the store.")
+    b.add_argument("inputs", nargs="*", help="Source files to ingest.")
+    b.add_argument("--folder", help="Ingest all supported files in this folder.")
+    b.add_argument("--recursive", action="store_true", help="Recurse into subfolders.")
+    b.add_argument("--store", default="store", help="Knowledge store directory.")
+    b.add_argument("--filter", choices=["none", "standard", "strict"], default="standard")
+    b.add_argument("--coref", action="store_true")
+    b.add_argument("--engine", choices=["svo", "spacy"], default="svo")
+
+    lc = sub.add_parser("lifecycle", help="Corpus lifecycle: promote / contradictions / reextract.")
+    lc.add_argument("op", choices=["promote", "contradictions", "reextract"],
+                    help="Operation to run over the store.")
+    lc.add_argument("--store", default="store", help="Knowledge store directory.")
+    lc.add_argument("--min-sources", type=int, default=2,
+                    help="promote: min distinct sources to corroborate (default 2).")
+    lc.add_argument("--engine", choices=["svo", "spacy"], default="svo",
+                    help="reextract: extraction engine (default svo).")
     return parser
 
 
@@ -384,6 +402,51 @@ def _cmd_compile(args) -> int:
     return 0
 
 
+def _cmd_batch(args) -> int:
+    import os
+    from .factory import batch_drop, scan_folder, format_report
+    sources = list(args.inputs or [])
+    if args.folder:
+        if not os.path.isdir(args.folder):
+            print(f"error: folder not found: {args.folder}", file=sys.stderr)
+            return 2
+        sources += scan_folder(args.folder, recursive=args.recursive)
+    if not sources:
+        print("error: no inputs (pass files or --folder).", file=sys.stderr)
+        return 2
+    report = batch_drop(sources, args.store, filter_name=args.filter,
+                        coref=args.coref, engine=args.engine)
+    print(format_report(report))
+    return 0
+
+
+def _cmd_lifecycle(args) -> int:
+    import os
+    from .store import KnowledgeStore
+    from .lifecycle import promote_reliability, find_contradictions, reextract_store
+    if not os.path.isdir(args.store):
+        print(f"error: store not found: {args.store}", file=sys.stderr)
+        return 2
+    store = KnowledgeStore(args.store)
+
+    if args.op == "promote":
+        proms = promote_reliability(store, min_sources=args.min_sources)
+        print(f"{len(proms)} reliability promotion(s) suggested:")
+        for p in proms:
+            print(f"  {p['old_reliability']} -> {p['new_reliability']} "
+                  f"({p['sources']} sources): {p['statement']}")
+    elif args.op == "contradictions":
+        conflicts = find_contradictions(store)
+        print(f"{len(conflicts)} contradiction(s) found:")
+        for c in conflicts:
+            print(f"  {c['subject']} {c['predicate']} -> {', '.join(c['objects'])}")
+    elif args.op == "reextract":
+        result = reextract_store(store, engine=args.engine)
+        print(f"Re-extraction complete: {result['reextracted']} reextracted, "
+              f"{result['skipped']} skipped (no source text).")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entrypoint. Returns a process exit code."""
     parser = _build_parser()
@@ -398,6 +461,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _cmd_catalog(args)
     if args.command == "compile":
         return _cmd_compile(args)
+    if args.command == "batch":
+        return _cmd_batch(args)
+    if args.command == "lifecycle":
+        return _cmd_lifecycle(args)
     parser.print_help()
     return 1
 
