@@ -34,19 +34,19 @@
 │  │  (Session 1)    │    │  (Session 2)     │    │  VERIFICATION        │   │
 │  │                 │    │                  │    │  (Session 2)         │   │
 │  │ • Ollama backend     │ • Provenance     │    │                      │   │
-│  │ • Domain templates   │ • Prompt+Response│    │ • Semantic clustering│   │
-│  │ • Batched gen        │ • Gen params     │    │ • Agreement counting │   │
+│  │ • Structured output  │ • Embeddings     │    │ • Semantic clustering│   │
+│  │ • JSON schema enforce│ • Lineage weight │    │ • Embeddings + lineage│   │
 │  └─────────────────┘    └──────────────────┘    └──────────┬───────────┘   │
 │                                                            │               │
 │                                                            ▼               │
 │  ┌─────────────────┐    ┌──────────────────┐    ┌──────────────────────┐   │
 │  │  MODEL DISTILL  │◀───│  KNOWLEDGE GRAPH │◀───│  LIFECYCLE           │   │
-│  │  (Session 3)    │    │  + STORE         │    │  PROMOTION           │   │
-│  │                 │    │  (Existing)      │    │  (Existing)          │   │
-│  │ • Filter: min_model_agreement             │    │                      │   │
-│  │ • Dedup: cross-model Jaccard              │    │ • 2 models = LIKELY  │   │
-│  │ • Rank: quality × agreement               │    │ • 3 models = VERIFIED│   │
-│  │ • Output: chat/inst/RAG + manifest        │    └──────────────────────┘   │
+│  │  (Session 3)    │    │  + KÙZU STORE    │    │  PROMOTION           │   │
+│  │                 │    │  (KùzuDB)        │    │  (Embeddings + line) │   │
+│  │ • Filter: min_eff_agreement             │    │                      │   │
+│  │ • Dedup: cosine similarity              │    │ • 2 models diff lin  │   │
+│  │ • Rank: quality × eff_agreement         │    │ • 3 models = VERIFIED│   │
+│  │ • Output: KnowledgeBlock v1 schema      │    └──────────────────────┘   │
 │  └────────┬────────┘                                                        │
 │           │                                                                 │
 │           ▼                                                                 │
@@ -54,10 +54,10 @@
 │  │  GRAVEYARD CLI  │    │  EVALUATION      │    │  GRAPH TOOLS + MCP   │   │
 │  │  (Session 4)    │    │  (Session 5)     │    │  (Session 6)         │   │
 │  │                 │    │                  │    │                      │   │
-│  │ • Model discovery  │ • Gold sets      │    │ • Cypher queries     │   │
-│  │ • Resource mgmt    │ • Calibrated     │    │ • NL → Cypher        │   │
-│  │ • Resume/checkpoint│   thresholds    │    │ • MCP server         │   │
-│  │ • Rich progress    │ • CI gates       │    │ • LLM tool use       │   │
+│  │ • Model discovery  │ • Gold sets (SVO)  │    │ • KùzuDB + Cypher    │   │
+│  │ • Resource mgmt    │ • Embeddings match │    │ • Vector search      │   │
+│  │ • Resume/checkpoint│ • Lineage gates    │    │ • MCP server         │   │
+│  │ • Rich progress    │ • CI gates         │    │ • LLM tool use       │   │
 │  └────────┬────────┘    └────────┬─────────┘    └──────────────────────┘   │
 │           │                      │                                          │
 │           └──────────┬───────────┘                                          │
@@ -66,7 +66,7 @@
 │           │  TRAINING RUN       │                                           │
 │           │  (Session 7)        │                                           │
 │           │                     │                                           │
-│           │ • Compile shards    │                                           │
+│           │ • Compile blocks    │                                           │
 │           │ • LoRA/qlora SFT    │                                           │
 │           │ • Benchmark vs base │                                           │
 │           │ • Faithfulness eval │                                           │
@@ -89,31 +89,66 @@
 
 ## Session Plan (8 Sessions)
 
-### Session 1: Model Probe Infrastructure (Ollama-First)
-**Target:** `knowledge_graph_pkg/model_probe.py`, `probe_templates.py`
+### Session 1: Model Probe Infrastructure (Ollama-First + Structured Outputs)
+**Target:** `knowledge_graph_pkg/model_probe.py`, `probe_templates.py`, `schemas.py`
 
 **Design Decision:** Ollama-only for v1. Your abandoned models are already in Ollama (qwen2.5:14b, phi4, etc.). No API keys, no network latency, free, private, total control. Future sessions can add HF/vLLM/API backends behind the same protocol if needed.
 
-**Backend Support (Ollama v1, protocol ready for extension):**
-```python
-class ProbeBackend(Protocol):
-    def generate(self, prompts: List[str], **gen_kwargs) -> List[str]: ...
+**Key Architectural Shift: Structured Outputs at Probing Layer**
+Instead of logging raw strings and running post-hoc SVO extraction, force models to emit structured JSON *during* the forward pass using Ollama's native `format` parameter (JSON schema enforcement). This eliminates the need for erratic post-processing parsers in Session 2 and guarantees uniform data structures from the jump.
 
-# Session 1 implements:
+**Structured Output Schema (Ollama `format` parameter):**
+```python
+# schemas.py — canonical schema passed to Ollama `format`
+PROBE_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "facts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string"},
+                    "predicate": {"type": "string"},
+                    "object": {"type": "string"},
+                    "context_or_qualifier": {"type": "string"},
+                    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+                },
+                "required": ["subject", "predicate", "object"],
+                "additionalProperties": False
+            }
+        }
+    },
+    "required": ["facts"],
+    "additionalProperties": False
+}
+```
+
+**Backend Implementation (OllamaBackend with structured output):**
+```python
 class OllamaBackend:
-    """Primary backend — uses local Ollama server (http://localhost:11434)."""
+    """Primary backend — uses local Ollama server with structured output."""
     def __init__(self, model: str, host: str = "http://localhost:11434"):
         self.client = ollama.Client(host=host)
         self.model = model
     
-    def generate(self, prompts: List[str], **gen_kwargs) -> List[str]:
-        # Concurrent requests for batching; Ollama handles queueing
-        ...
-
-# Future backends (not in Session 1, lazy-loaded when needed):
-# class HFBackend(ProbeBackend): ...      # transformers + accelerate
-# class VLLMBackend(ProbeBackend): ...    # vllm.LLM
-# class APIBackend(ProbeBackend): ...     # OpenAI-compatible
+    def generate_structured(self, prompts: List[str], schema: dict, **gen_kwargs) -> List[dict]:
+        """Generate with JSON schema enforcement via Ollama `format` parameter."""
+        results = []
+        for prompt in prompts:
+            response = self.client.generate(
+                model=self.model,
+                prompt=prompt,
+                format=schema,  # <-- native JSON schema enforcement
+                options={
+                    "temperature": gen_kwargs.get("temperature", 0.3),
+                    "top_p": gen_kwargs.get("top_p", 0.9),
+                    "num_predict": gen_kwargs.get("max_tokens", 512),
+                    "seed": gen_kwargs.get("seed", 42)
+                }
+            )
+            results.append(json.loads(response["response"]))
+        return results
 ```
 
 **Prompt Templates (domain-parameterized):**
@@ -128,7 +163,7 @@ class OllamaBackend:
 
 **Seed Entity Extraction:** Bootstrap entities from existing KnowledgeGraph to generate targeted probes.
 
-**Output Schema:**
+**Output Schema (Structured — no raw strings):**
 ```json
 {
   "model": "model-name",
@@ -136,7 +171,12 @@ class OllamaBackend:
   "domain": "biochemistry",
   "prompt_type": "entity|relation|concept|list|negative",
   "prompt": "...",
-  "response": "...",
+  "structured_response": {
+    "facts": [
+      {"subject": "Mitochondria", "predicate": "produce", "object": "ATP", "context_or_qualifier": "via oxidative phosphorylation", "confidence": 0.95},
+      ...
+    ]
+  },
   "gen_config": {"temperature": 0.3, "top_p": 0.9, "max_tokens": 512, "seed": 42},
   "timestamp": "2026-06-15T..."
 }
@@ -146,151 +186,200 @@ class OllamaBackend:
 ```bash
 python -c "
 from knowledge_graph_pkg.model_probe import ModelProbe
+from knowledge_graph_pkg.schemas import PROBE_OUTPUT_SCHEMA
 probe = ModelProbe(backend='ollama', model='qwen2.5:14b')
-outputs = probe.probe_domain('biochemistry', n_prompts=10)
-assert len(outputs) == 10
-assert all('response' in o for o in outputs)
-print('✓ Session 1 verified')
+outputs = probe.probe_domain('biochemistry', n_prompts=10, schema=PROBE_OUTPUT_SCHEMA)
+print(f'Generated {len(outputs)} structured outputs')
+print(outputs[0].keys())  # includes 'structured_response'
+assert all('facts' in o['structured_response'] for o in outputs)
+print('✓ Session 1 verified: structured outputs')
 "
 ```
 
 ---
 
-### Session 2: Model Drops + Cross-Model Verification
-**Target:** `knowledge_graph_pkg/model_drop.py`, `cross_model.py`
+---
 
-**ModelDrop Class:**
-- Extends existing `Drop` with `model_provenance` field
-- Stores: prompt, response, model_id, backend, gen_config, prompt_type
-- Content hash includes model identity (same prompt + different model = different drop)
+### Session 2: Model Drops + Cross-Model Verification (Embeddings + Lineage Weighting)
+**Target:** `knowledge_graph_pkg/model_drop.py`, `cross_model.py`, `embeddings.py`
 
-**CrossModelVerifier:**
+**Key Architectural Shifts:**
+1. **Local Embeddings instead of Jaccard** — Use Ollama's embedding endpoint (`/api/embeddings`) with `mxbai-embed-large` or `nomic-embed-text` for semantic similarity. Jaccard fails on paraphrased facts (e.g., "Mitochondria generate ATP" vs "Adenosine triphosphate is synthesized by mitochondria").
+2. **Lineage Diversity Weighting** — Agreement across distinct architectures (Qwen + Phi + Llama) scales higher than agreement across same-family variants (three Qwen fine-tunes).
+
+**Embeddings Module (`embeddings.py`):**
 ```python
-verifier = CrossModelVerifier(models=['qwen2.5:14b', 'phi4:latest', 'deepseek:7b'])
-results = verifier.probe_domain('biochemistry', n_prompts=500)
-
-# Results structure:
-{
-  "clusters": [
-    {
-      "canonical_fact": "Mitochondria produce ATP via oxidative phosphorylation",
-      "supporting_models": ["qwen2.5:14b", "phi4:latest", "deepseek:7b"],
-      "model_responses": {...},
-      "extracted_facts": [...],  # SVO extraction per model
-      "agreement_count": 3,
-      "jaccard_similarity": 0.92
-    },
-    ...
-  ],
-  "verified": 842,      # agreement >= 3
-  "likely_true": 1234,  # agreement == 2
-  "singletons": 567,    # agreement == 1
-  "conflicts": [...],   # same subject, different objects
-}
+class LocalEmbedder:
+    """Semantic embeddings via Ollama local endpoint."""
+    def __init__(self, model: str = "mxbai-embed-large", host: str = "http://localhost:11434"):
+        self.client = ollama.Client(host=host)
+        self.model = model
+    
+    def embed(self, texts: List[str]) -> np.ndarray:
+        embeddings = []
+        for text in texts:
+            resp = self.client.embeddings(model=self.model, prompt=text)
+            embeddings.append(resp["embedding"])
+        return np.array(embeddings)
+    
+    def cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 ```
 
-**Semantic Clustering:**
-- Extract SVO facts from each model's response independently
-- Cluster by Jaccard similarity (threshold 0.85 cross-model, 0.9 intra-model)
+**Semantic Clustering (Embeddings-based):**
+- Embed each fact's SVO triple concatenation: `"subject predicate object context"`
+- Cluster by cosine similarity (threshold 0.85 cross-model, 0.90 intra-model)
 - Cluster representative = highest quality_score fact
-- Agreement count = distinct models in cluster
 
-**Integration with Existing Lifecycle:**
+**Lineage Diversity Weight (replaces simple agreement counting):**
 ```python
-# Extend promote_reliability in lifecycle.py
-def promote_reliability(store, min_sources=2, min_models=2):
-    # min_sources = distinct source documents
-    # min_models = distinct models agreeing
-    # Both criteria must pass for promotion
+MODEL_LINEAGE = {
+    "qwen2.5:14b": "qwen",
+    "qwen2.5-coder:14b": "qwen",
+    "phi4:latest": "phi",
+    "llama3.1:8b": "llama",
+    "mistral:7b": "mistral",
+    "deepseek-coder:7b": "deepseek",
+}
+
+def lineage_diversity_weight(model_names: List[str]) -> float:
+    """Returns 1.0 for single lineage, up to 2.0 for 3+ distinct lineages."""
+    lineages = {MODEL_LINEAGE.get(m, "unknown") for m in model_names}
+    distinct = len(lineages - {"unknown"})
+    return min(1.0 + 0.5 * distinct, 2.0)  # caps at 2.0 for 3+ distinct
+
+# Effective agreement = raw_count * lineage_diversity_weight
+# Example: 3 Qwen models agree → 3 * 1.0 = 3.0
+#          Qwen + Phi + Llama agree → 3 * 2.0 = 6.0 (much stronger signal)
+```
+
+**Reliability Promotion (Updated):**
+```python
+def promote_reliability(store, min_effective_agreement: float = 4.0):
+    # min_effective_agreement = raw_count * lineage_weight
+    # Requires either: 4+ same-lineage models, OR 2+ distinct-lineage models
+    ...
 ```
 
 **Verification:**
 ```bash
 python -c "
 from knowledge_graph_pkg.cross_model import CrossModelVerifier
-verifier = CrossModelVerifier(models=['qwen2.5:14b', 'phi4:latest'])
+from knowledge_graph_pkg.embeddings import LocalEmbedder
+embedder = LocalEmbedder()
+verifier = CrossModelVerifier(
+    models=['qwen2.5:14b', 'phi4:latest', 'llama3.1:8b'],
+    embedder=embedder
+)
 report = verifier.probe_domain('biochemistry', n_prompts=100)
-assert report['verified'] > 0
-assert report['likely_true'] > 0
-print(f'Verified: {report[\"verified\"]}, Likely: {report[\"likely_true\"]}')
+print(f'Verified (effective): {report[\"verified_effective\"]}')
+print(f'Lineage-weighted clusters: {len(report[\"clusters\"])}')
 "
 ```
 
 ---
 
-### Session 3: Model Distillation Pipeline + CLI
-**Target:** `knowledge_graph_pkg/model_distill.py`, CLI extensions in `cli.py`
+### Session 3: Model Distillation Pipeline + CLI (KnowledgeBlock v1)
+**Target:** `knowledge_graph_pkg/model_distill.py`, `knowledge_block.py`, CLI extensions in `cli.py`
 
-**ModelKnowledgeDistiller:**
+**KnowledgeBlock v1 Schema (Canonical Output):**
+```python
+# knowledge_block.py — frozen schema for Phase 1
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from enum import Enum
+
+class Reliability(str, Enum):
+    UNVERIFIED = "UNVERIFIED"
+    POSSIBLY_TRUE = "POSSIBLY_TRUE"
+    LIKELY_TRUE = "LIKELY_TRUE"
+    VERIFIED = "VERIFIED"
+
+class KnowledgeBlock(BaseModel):
+    block_id: str
+    version: str = "1.0.0"
+    subject: str
+    predicate: str
+    object: str
+    context: str = ""
+    domain: str
+    reliability: Reliability
+    provenance: dict  # {"source_models": [...], "agreement_count": int, "lineage_weight": float, "source_hashes": [...]}
+    embedding: Optional[List[float]] = None
+    relations: List[dict] = []  # [{"predicate": "...", "object_block_id": "...", "weight": 0.9}]
+    deprecated_by: Optional[str] = None
+    created_at: str
+    updated_at: str
+```
+
+**ModelKnowledgeDistiller (Embeddings + Lineage):**
 ```python
 class ModelKnowledgeDistiller(KnowledgeDistiller):
-    """Specialized distiller for model-derived facts with provenance."""
+    def __init__(self, kg, min_effective_agreement: float = 4.0, 
+                 embedder: LocalEmbedder = None, ...):
+        self.min_effective_agreement = min_effective_agreement
+        self.embedder = embedder or LocalEmbedder()
+        # Inherits: dedup_threshold (cosine), quality_filter, top_k
     
-    def __init__(self, kg, min_model_agreement=2, min_reliability=LIKELY_TRUE, ...):
-        self.min_model_agreement = min_model_agreement
-        # Inherits: dedup_threshold, quality_filter, top_k
-    
-    def select_facts(self) -> List[Dict]:
-        # Filter: model_agreement >= min_model_agreement
-        # Filter: reliability >= min_reliability
-        # Quality filter (existing FactQualityFilter)
-        # Cross-model dedup: Jaccard >= 0.85
-        # Rank: quality_score * log(model_agreement + 1)
-        # Top-k truncation
+    def select_facts(self) -> List[KnowledgeBlock]:
+        # Filter: effective_agreement >= min_effective_agreement
+        # Effective = raw_count * lineage_diversity_weight
+        # Cosine dedup (threshold 0.85 cross-model, 0.90 intra-model)
+        # Rank: quality_score * log(effective_agreement + 1)
+        # Emit KnowledgeBlock v1 objects
         ...
 ```
 
-**Output Formats (extended with provenance):**
+**Output Formats:**
 ```json
-// chat.jsonl - SFT format
-{"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}], 
- "metadata": {"source_models": ["m1", "m2"], "agreement": 2, "reliability": "VERIFIED"}}
+// KnowledgeBlock JSONL (canonical)
+{"block_id": "kb_biochem_00421", "version": "1.0.0", "subject": "Mitochondria", 
+ "predicate": "produce", "object": "ATP", "context": "via oxidative phosphorylation",
+ "domain": "biochemistry", "reliability": "VERIFIED",
+ "provenance": {"source_models": ["qwen2.5:14b", "phi4:latest"], 
+                "agreement_count": 2, "lineage_weight": 2.0, 
+                "source_hashes": ["abc123...", "def456..."]},
+ "embedding": [0.12, -0.04, ...], 
+ "relations": [], "created_at": "...", "updated_at": "..."}
 
-// instruction.jsonl - IFT format  
-{"instruction": "...", "input": "", "output": "...", 
- "metadata": {"source_models": ["m1", "m2"], "agreement": 2}}
-
-// rag.txt - RAG corpus with citations
-"1. Mitochondria produce ATP via oxidative phosphorylation [qwen2.5:14b, phi4:latest; VERIFIED]"
-
-// manifest.json - Shard provenance
-{
-  "shard": "biochem_v1",
-  "created": "2026-06-15T...",
-  "models_probed": ["qwen2.5:14b", "phi4:latest"],
-  "total_facts": 5000,
-  "verified": 3200,
-  "likely_true": 1800,
-  "domains": ["biochemistry"],
-  "min_agreement": 2,
-  "dedup_threshold": 0.85
-}
+// Legacy formats (chat/inst/RAG) generated on-demand from KnowledgeBlock
 ```
 
 **CLI Commands:**
 ```bash
-# Probe models
-knowledgereduce model-probe --models qwen2.5:14b,phi4:latest \
+# Probe models (structured output)
+knowledgereduce model-probe --models qwen2.5:14b,phi4:latest,llama3.1:8b \
   --domains biochem,physics --n-prompts 500 --output ./model_drops/
 
-# Distill drops into shards
-knowledgereduce model-distill ./model_drops/ --output ./shards/ \
-  --format chat,instruction,text --min-agreement 2 \
-  --max-tokens 100000 --split 0.9
+# Distill drops into KnowledgeBlocks
+knowledgereduce model-distill ./model_drops/ --output ./blocks/ \
+  --format knowledge_block --min-effective-agreement 4.0 \
+  --embedder mxbai-embed-large
+
+# Compile training mix from blocks
+knowledgereduce compile --blocks ./blocks/ --output ./training_mix.jsonl \
+  --format chat --min-reliability LIKELY_TRUE --max-tokens 200000
 ```
 
 **Verification:**
 ```bash
-knowledgereduce model-probe --models qwen2.5:14b,phi4:latest \
+knowledgereduce model-probe --models qwen2.5:14b,phi4:latest,llama3.1:8b \
   --domains biochem --n-prompts 100 --output /tmp/test_drops
 
-knowledgereduce model-distill /tmp/test_drops --output /tmp/test_shards \
-  --format chat --min-agreement 2 --max-tokens 5000
+knowledgereduce model-distill /tmp/test_drops --output /tmp/test_blocks \
+  --format knowledge_block --min-effective-agreement 3.0 \
+  --embedder mxbai-embed-large
 
-# Verify output
-head -3 /tmp/test_shards/biochem_chat.jsonl | jq '.metadata.source_models'
-wc -l /tmp/test_shards/biochem_chat.jsonl
-cat /tmp/test_shards/manifest.json | jq '.verified'
+# Verify KnowledgeBlock v1
+python -c "
+import json
+for line in open('/tmp/test_blocks/biochem_knowledge_block.jsonl'):
+    kb = json.loads(line)
+    assert kb['version'] == '1.0.0'
+    assert 'provenance' in kb and 'lineage_weight' in kb['provenance']
+    assert kb['reliability'] in ['UNVERIFIED','POSSIBLY_TRUE','LIKELY_TRUE','VERIFIED']
+print('✓ Session 3 verified: KnowledgeBlock v1')
+"
 ```
 
 ---
@@ -354,8 +443,8 @@ cat /tmp/test_graveyard/manifest.json | jq '.models_probed, .verified'
 
 ---
 
-### Session 5: Evaluation Framework + Quality Gates
-**Target:** `knowledge_graph_pkg/model_eval.py`, gold sets, CI config
+### Session 5: Evaluation Framework + Quality Gates (Embeddings-based)
+**Target:** `knowledge_graph_pkg/model_eval.py`, gold sets, CI config, `embeddings.py`
 
 **Gold Set Construction (per domain):**
 ```json
@@ -363,24 +452,29 @@ cat /tmp/test_graveyard/manifest.json | jq '.models_probed, .verified'
 {
   "domain": "biochemistry",
   "facts": [
-    {"statement": "Mitochondria produce ATP via oxidative phosphorylation", "verified": true},
-    {"statement": "DNA polymerase synthesizes DNA in 5' to 3' direction", "verified": true},
-    {"statement": "Glucose is the primary energy source for brain cells", "verified": true},
+    {"subject": "Mitochondria", "predicate": "produce", "object": "ATP", "context": "via oxidative phosphorylation", "verified": true},
+    {"subject": "DNA polymerase", "predicate": "synthesizes", "object": "DNA", "context": "5' to 3' direction", "verified": true},
+    {"subject": "Glucose", "predicate": "is primary energy source for", "object": "brain cells", "verified": true},
     ...
   ],
   "negative": [
-    {"statement": "Mitochondria perform photosynthesis", "verified": false},
+    {"subject": "Mitochondria", "predicate": "perform", "object": "photosynthesis", "verified": false},
     ...
   ]
 }
 ```
 
-**Evaluator:**
+**Evaluator (Embeddings-based matching):**
 ```python
 class ModelShardEvaluator:
+    def __init__(self, embedder: LocalEmbedder, similarity_threshold: float = 0.85):
+        self.embedder = embedder
+        self.threshold = similarity_threshold
+    
     def evaluate_shard(self, shard_path: str, gold_path: str) -> EvaluationReport:
-        # Load shard facts + gold facts
-        # Match by semantic similarity (Jaccard ≥ 0.8)
+        # Load shard facts + gold facts (both structured SVO)
+        # Embed all facts: "subject predicate object context"
+        # Match by cosine similarity >= threshold
         # Compute per-tier metrics:
         return {
             "verified": {"precision": 0.96, "recall": 0.72, "f1": 0.82, "count": 3200},
@@ -389,9 +483,9 @@ class ModelShardEvaluator:
             "hallucination_rate": 0.03,    # shard facts contradicted by gold negative
             "coverage": 0.68,              # % of gold facts recovered
             "agreement_calibration": {
-                "2_models": {"precision": 0.88, "n": 4200},
-                "3_models": {"precision": 0.96, "n": 3200},
-                "4_models": {"precision": 0.98, "n": 1100}
+                "2_models_same_lineage": {"precision": 0.88, "n": 4200},
+                "2_models_distinct_lineage": {"precision": 0.96, "n": 3200},
+                "3_models_distinct_lineage": {"precision": 0.98, "n": 1100}
             }
         }
 ```
@@ -406,12 +500,14 @@ gates:
   max_hallucination_rate: 0.05
   min_coverage: 0.55
   min_facts_per_domain: 1000
+  min_lineage_diversity_verified: 1.5  # requires cross-lineage agreement
 ```
 
 **CLI:**
 ```bash
 knowledgereduce model-eval --shard ./shards/biochem_chat.jsonl \
-  --gold ./data/gold_biochem.json --output ./eval_report.json
+  --gold ./data/gold_biochem.json --output ./eval_report.json \
+  --embedder mxbai-embed-large
 
 # CI mode: exits non-zero if gates fail
 knowledgereduce model-eval --shard ./shards/ --gold ./data/ --ci
@@ -419,52 +515,111 @@ knowledgereduce model-eval --shard ./shards/ --gold ./data/ --ci
 
 ---
 
-### Session 6: Graph Query Interface + MCP Server
-**Target:** `knowledge_graph_pkg/graph_tool.py`, MCP server
+### Session 6: Graph Query Interface + MCP Server (KùzuDB)
+**Target:** `knowledge_graph_pkg/graph_tool.py`, `kuzu_store.py`, MCP server
 
-**Graph Tools (LLM-callable):**
+**Key Architectural Shift: KùzuDB instead of Custom Cypher Parser**
+KùzuDB is an embedded property graph database ("SQLite of Graph DBs"). It runs in-process as a simple Python library (`pip install kuzu`), handles massive graph relations with extreme speed, and gives you **fully compliant, standard Cypher** without writing a single parsing token rule.
+
+**KùzuDB Store (`kuzu_store.py`):**
 ```python
-def graph_query(cypher: str, domain: str = None, limit: int = 100) -> List[Dict]:
-    """Execute Cypher query on KnowledgeGraph."""
-    # Uses networkx + custom Cypher subset parser
+import kuzu
 
-def graph_get_fact(fact_id: str) -> Dict:
-    """Retrieve full fact with provenance, sources, model agreements."""
-
-def graph_find_related(fact_id: str, hops: int = 1, rel_types: List[str] = None) -> List[Dict]:
-    """Graph traversal from a fact."""
-
-def graph_find_by_subject(subject: str, domain: str = None) -> List[Dict]:
-    """Find all facts about a subject entity."""
-
-def graph_stats(domain: str = None) -> Dict:
-    """Return fact counts by reliability, category, model agreement."""
+class KuzuStore:
+    """Embedded property graph with native Cypher."""
+    def __init__(self, path: str = "./kuzu_db"):
+        self.db = kuzu.Database(path)
+        self.conn = kuzu.Connection(self.db)
+        self._init_schema()
+    
+    def _init_schema(self):
+        self.conn.execute("""
+            CREATE NODE TABLE Fact (
+                block_id STRING, statement STRING, domain STRING,
+                reliability STRING, embedding DOUBLE[],
+                source_models STRING[], agreement_count INT,
+                lineage_weight DOUBLE, PRIMARY KEY (block_id)
+            )
+        """)
+        self.conn.execute("""
+            CREATE REL TABLE RELATES (FROM Fact TO Fact, predicate STRING, weight DOUBLE)
+        """)
+    
+    def ingest_block(self, block: KnowledgeBlock):
+        # Insert fact node
+        self.conn.execute("""
+            CREATE (f:Fact {
+                block_id: $id, statement: $stmt, domain: $domain,
+                reliability: $rel, embedding: $emb,
+                source_models: $models, agreement_count: $agree,
+                lineage_weight: $weight
+            })
+        """, {...})
+        # Create RELATES edges from block.relations
+        for rel in block.relations:
+            self.conn.execute("""
+                MATCH (a:Fact {block_id: $src}), (b:Fact {block_id: $dst})
+                CREATE (a)-[:RELATES {predicate: $pred, weight: $wt}]->(b)
+            """, {...})
+    
+    def query(self, cypher: str, params: dict = None) -> List[dict]:
+        """Execute standard Cypher — no custom parser needed."""
+        result = self.conn.execute(cypher, params or {})
+        return [dict(row) for row in result]
+    
+    def vector_search(self, embedding: List[float], k: int = 10) -> List[dict]:
+        """Native vector similarity search (Kùzu 0.8+)."""
+        return self.conn.execute("""
+            MATCH (f:Fact)
+            RETURN f, cosine_similarity(f.embedding, $emb) AS score
+            ORDER BY score DESC
+            LIMIT $k
+        """, {"emb": embedding, "k": k})
 ```
 
-**Natural Language → Cypher (template-based):**
+**Graph Tools (LLM-callable, backed by Kùzu):**
 ```python
-NL_TEMPLATES = {
-    "facts_about": "MATCH (f) WHERE f.subject CONTAINS '{subject}' AND f.reliability IN {reliability} RETURN f LIMIT {limit}",
-    "verified_in_domain": "MATCH (f) WHERE f.domain = '{domain}' AND f.reliability = 'VERIFIED' RETURN f LIMIT {limit}",
-    "model_agreement": "MATCH (f) WHERE f.model_agreement >= {n} RETURN f LIMIT {limit}",
-    "contradictions": "MATCH (f1), (f2) WHERE f1.subject = f2.subject AND f1.object != f2.object RETURN f1, f2",
-}
+def graph_query(cypher: str, domain: str = None, limit: int = 100) -> List[Dict]:
+    """Execute standard Cypher on KùzuDB."""
+    store = get_kuzu_store()
+    if domain:
+        cypher = f"MATCH (f:Fact) WHERE f.domain = '{domain}' " + cypher
+    cypher += f" LIMIT {limit}"
+    return store.query(cypher)
+
+def graph_find_related(block_id: str, hops: int = 1) -> List[Dict]:
+    store = get_kuzu_store()
+    return store.query(f"""
+        MATCH (a:Fact {{block_id: '{block_id}'}})-[:RELATES*1..{hops}]->(b:Fact)
+        RETURN b
+    """)
+
+def graph_find_by_subject(subject: str, domain: str = None) -> List[Dict]:
+    store = get_kuzu_store()
+    where = f"WHERE f.subject CONTAINS '{subject}'"
+    if domain:
+        where += f" AND f.domain = '{domain}'"
+    return store.query(f"MATCH (f:Fact) {where} RETURN f LIMIT 100")
+
+def graph_vector_search(embedding: List[float], k: int = 10) -> List[Dict]:
+    """Semantic search via Kùzu native vector index."""
+    return get_kuzu_store().vector_search(embedding, k)
 ```
 
 **MCP Server:**
 ```bash
-knowledgereduce serve-mcp --store ./store --port 8080 --host 0.0.0.0
+knowledgereduce serve-mcp --store ./kuzu_db --port 8080 --host 0.0.0.0
 ```
 
 **Tool Schema (auto-generated for LLM function calling):**
 ```json
 {
   "name": "graph_query",
-  "description": "Query the knowledge graph with Cypher",
+  "description": "Query the knowledge graph with standard Cypher",
   "parameters": {
     "type": "object",
     "properties": {
-      "cypher": {"type": "string", "description": "Cypher query"},
+      "cypher": {"type": "string", "description": "Standard Cypher query"},
       "domain": {"type": "string", "description": "Filter by domain"},
       "limit": {"type": "integer", "default": 100}
     },
@@ -475,30 +630,30 @@ knowledgereduce serve-mcp --store ./store --port 8080 --host 0.0.0.0
 
 ---
 
-### Session 7: End-to-End Training Run
-**Target:** Trained model + evaluation report
+### Session 7: End-to-End Training Run (KnowledgeBlock → LoRA)
+**Target:** Trained LoRA adapters + evaluation report
 
-**Compile Training Mix:**
+**Compile Training Mix from KnowledgeBlocks:**
 ```bash
-knowledgereduce compile --store ./store --output ./training_mix.jsonl \
-  --format chat --min-quality 0.7 \
-  --reliability LIKELY_TRUE,VERIFIED \
-  --max-tokens 200000 --split 0.95 \
+knowledgereduce compile --blocks ./blocks/ --output ./training_mix.jsonl \
+  --format chat --min-reliability LIKELY_TRUE \
+  --min-lineage-weight 1.5 --max-tokens 200000 --split 0.95 \
   --domains biochem,physics,law,coding,math
 ```
 
-**SFT Training (any trainer):**
+**SFT Training (LoRA on base model):**
 ```bash
-# HF SFTTrainer example
+# HF SFTTrainer example — trains LoRA adapter, not full model
 python train_sft.py \
   --model_name_or_path Qwen/Qwen2.5-7B \
   --dataset ./training_mix.jsonl \
-  --output_dir ./modelreduce-qwen-7b \
-  --lora_rank 32 --lora_alpha 64 \
+  --output_dir ./modelreduce-qwen-7b-biochem \
+  --lora_rank 32 --lora_alpha 64 --lora_dropout 0.05 \
   --learning_rate 2e-4 --num_epochs 3 \
   --per_device_train_batch_size 4 \
   --gradient_accumulation_steps 4 \
-  --bf16 --gradient_checkpointing
+  --bf16 --gradient_checkpointing \
+  --adapter_name biochem_v1
 ```
 
 **Evaluation Suite:**
@@ -507,27 +662,27 @@ python train_sft.py \
 |-----------|--------|--------|
 | Domain QA (biochem, physics, law, coding, math) | Accuracy | > base model +10% |
 | Hallucination rate (TruthfulQA-style) | % false claims | < base model -50% |
-| Faithfulness to KG | % answers traceable to KG facts | > 90% |
+| Faithfulness to KG | % answers traceable to KG blocks | > 90% |
 | Contradiction detection | F1 on known conflicts | > 0.85 |
 | General capability (MMLU, GSM8K) | No regression | ±2% |
 
-**Deliverable:** `modelreduce-qwen-7b/` checkpoint + `TRAINING_REPORT.md`
+**Deliverable:** `modelreduce-qwen-7b-{domain}/` LoRA adapters + `TRAINING_REPORT.md`
 
 ---
 
-### Session 8: Documentation, Tutorial, Release
-**Target:** Production-ready package
+### Session 8: Documentation, Tutorial, Release (Phase 1 Complete)
+**Target:** Production-ready Phase 1 package
 
 **Documentation:**
 - `README.md` — ModelReduce architecture + quickstart
 - `docs/model_reduce.md` — Full API reference
 - `examples/model_reduce_tutorial.ipynb` — End-to-end notebook:
-  1. Probe 2 Ollama models
-  2. Cross-verify on biochemistry
-  3. Distill to shards
-  4. Compile training mix
-  5. Train LoRA
-  6. Evaluate
+  1. Probe 3 Ollama models (Qwen, Phi, Llama) with structured output
+  2. Cross-verify on biochemistry with embeddings + lineage weighting
+  3. Distill to KnowledgeBlock v1
+  4. Compile training mix with lineage filters
+  5. Train LoRA adapter
+  6. Evaluate with embeddings-based evaluator
 
 **Packaging:**
 ```toml
@@ -535,6 +690,9 @@ python train_sft.py \
 [project.optional-dependencies]
 model-reduce = [
     "ollama>=0.3.0",
+    "kuzu>=0.8.0",
+    "mxbai-embed-large",  # via ollama pull
+    "pydantic>=2.0",
     "vllm>=0.4.0",
     "accelerate>=0.25.0",
     "transformers>=4.37.0",
@@ -544,13 +702,13 @@ model-reduce = [
 **Dockerfile:**
 ```dockerfile
 FROM nvidia/cuda:12.1-runtime-ubuntu22.04
-# Ollama + vLLM + HF + KnowledgeReduce
+# Ollama + KùzuDB + vLLM + HF + KnowledgeReduce
 # Entrypoint: knowledgereduce
 ```
 
 **CI/CD:**
 - GitHub Actions: test with mock models (fast)
-- Nightly: real model probe on 2 Ollama models
+- Nightly: real model probe on 3 Ollama models (Qwen, Phi, Llama)
 - Release: PyPI on tag
 
 ---
@@ -559,7 +717,7 @@ FROM nvidia/cuda:12.1-runtime-ubuntu22.04
 
 **Core (always):** `networkx>=2.5`, `numpy>=1.19.0`  
 **Existing Extras:** `ingest`, `pdf`, `nlp`, `viz`, `dev`  
-**New Extra:** `model-reduce` = `ollama`, `vllm`, `accelerate`, `transformers`
+**New Extra:** `model-reduce` = `ollama`, `kuzu`, `pydantic`, `vllm`, `accelerate`, `transformers`
 
 **Lazy Import Pattern (all backends):**
 ```python
@@ -570,6 +728,13 @@ def _import_ollama():
         return ollama
     except ImportError:
         raise ImportError("Ollama backend requires: pip install knowledgereduce[model-reduce]")
+
+def _import_kuzu():
+    try:
+        import kuzu
+        return kuzu
+    except ImportError:
+        raise ImportError("KùzuDB requires: pip install knowledgereduce[model-reduce]")
 ```
 
 ---
@@ -577,22 +742,24 @@ def _import_ollama():
 ## Session Dependency Graph
 
 ```
-Session 1 (ModelProbe)
+Session 1 (ModelProbe + Structured Output + Schemas)
     ↓
-Session 2 (ModelDrop + CrossModel) ← needs Session 1
+Session 2 (ModelDrop + CrossModel + Embeddings + Lineage) ← needs Session 1, Embeddings
     ↓
-Session 3 (ModelDistill + CLI) ← needs Session 2
+Session 3 (KnowledgeBlock v1 Distill) ← needs Session 2
     ↓
 Session 4 (Graveyard CLI) ← needs Session 3
     ├────────────────────┐
     ↓                    ↓
-Session 5 (Eval)    Session 6 (Graph Tools + MCP) ← needs Sessions 1-3
+Session 5 (Eval + Embeddings + Lineage Gates) ← needs Session 3, Embeddings
     ↓                    ↓
     └──────────┬─────────┘
                ↓
-         Session 7 (Training Run) ← needs 4,5,6
-               ↓
-         Session 8 (Docs + Release) ← needs 7
+Session 6 (KùzuDB + MCP) ← needs Session 3, KùzuDB
+    ↓
+Session 7 (LoRA Training from Blocks) ← needs 4,5,6
+    ↓
+Session 8 (Docs + Release) ← needs 7
 ```
 
 ---
@@ -600,28 +767,28 @@ Session 5 (Eval)    Session 6 (Graph Tools + MCP) ← needs Sessions 1-3
 ## Quick-Start Prompts for Each Session
 
 ### Session 1
-> Continue ModelReduce Session 1. Build `ModelProbe` with Ollama backend and domain prompt templates. Deliverable: `model_probe.py`, `probe_templates.py`. Verify: probe 10 biochem prompts on qwen2.5:14b.
+> Continue ModelReduce Session 1. Build `ModelProbe` with Ollama structured output (JSON schema), domain prompt templates, and Pydantic schemas. Deliverable: `model_probe.py`, `probe_templates.py`, `schemas.py`. Verify: probe 10 biochem prompts on qwen2.5:14b with structured output.
 
 ### Session 2
-> Continue ModelReduce Session 2. Build `ModelDrop` + `CrossModelVerifier`. Cluster facts by Jaccard, count model agreement, integrate with lifecycle promotion. Deliverable: `model_drop.py`, `cross_model.py`. Verify: 2 models, 100 prompts, report verified/likely counts.
+> Continue ModelReduce Session 2. Build `ModelDrop` + `CrossModelVerifier` with LocalEmbedder (mxbai-embed-large) and lineage diversity weighting. Cluster by cosine similarity, compute effective agreement. Deliverable: `model_drop.py`, `cross_model.py`, `embeddings.py`. Verify: 3 models (Qwen, Phi, Llama), 100 prompts, report effective agreement.
 
 ### Session 3
-> Continue ModelReduce Session 3. Build `ModelKnowledgeDistiller` + CLI commands `model-probe` and `model-distill`. Provenance in output metadata. Deliverable: `model_distill.py`, CLI extensions. Verify: end-to-end probe → distill → shards with manifest.
+> Continue ModelReduce Session 3. Build `KnowledgeBlock` v1 Pydantic model + `ModelKnowledgeDistiller` with embeddings + lineage weighting. Emit KnowledgeBlock v1 JSONL. Deliverable: `knowledge_block.py`, `model_distill.py`, CLI extensions. Verify: end-to-end probe → distill → KnowledgeBlock v1 with lineage_weight.
 
 ### Session 4
-> Continue ModelReduce Session 4. Build `graveyard` subcommand: model discovery, sequential GPU unload, resume checkpoints, rich progress table. Deliverable: graveyard command. Verify: 2 models, 1 domain, shards + manifest produced.
+> Continue ModelReduce Session 4. Build `graveyard` subcommand: model discovery, sequential GPU unload, resume checkpoints, rich progress table. Deliverable: graveyard command. Verify: 3 models, 1 domain, KnowledgeBlocks + manifest produced.
 
 ### Session 5
-> Continue ModelReduce Session 5. Build evaluation framework with gold sets, agreement calibration, CI gates. Deliverable: `model_eval.py`, gold sets, CI config. Verify: eval report with precision/recall per tier, gates pass/fail.
+> Continue ModelReduce Session 5. Build evaluation framework with SVO gold sets, embeddings-based matching, lineage-diversity gates. Deliverable: `model_eval.py`, gold sets, CI config. Verify: eval report with precision/recall per tier + lineage, gates pass/fail.
 
 ### Session 6
-> Continue ModelReduce Session 6. Build graph query tools + MCP server. Cypher subset, NL templates, auto-generated tool schemas. Deliverable: `graph_tool.py`, MCP server. Verify: LLM calls graph_query via MCP, returns facts.
+> Continue ModelReduce Session 6. Build KùzuDB store (`kuzu_store.py`) with native Cypher + vector search, MCP server. Deliverable: `kuzu_store.py`, `graph_tool.py`, MCP server. Verify: LLM calls graph_query via MCP, returns facts + vector search.
 
 ### Session 7
-> Continue ModelReduce Session 7. Compile shards → train LoRA on Qwen2.5-7B → evaluate on domain QA, hallucination, faithfulness. Deliverable: trained checkpoint + TRAINING_REPORT.md. Verify: +10% domain accuracy, -50% hallucination vs base.
+> Continue ModelReduce Session 7. Compile KnowledgeBlocks → train LoRA on Qwen2.5-7B per domain → evaluate on domain QA, hallucination, faithfulness. Deliverable: LoRA adapters per domain + TRAINING_REPORT.md. Verify: +10% domain accuracy, -50% hallucination vs base.
 
 ### Session 8
-> Continue ModelReduce Session 8. Write tutorial notebook, package for PyPI, Dockerfile, CI. Deliverable: `model_reduce_tutorial.ipynb`, `pip install knowledgereduce[model-reduce]`. Verify: tutorial runs end-to-end in Colab.
+> Continue ModelReduce Session 8. Write tutorial notebook (3 models, structured output, lineage), package for PyPI with kuzu/pydantic, Dockerfile, CI. Deliverable: `model_reduce_tutorial.ipynb`, `pip install knowledgereduce[model-reduce]`. Verify: tutorial runs end-to-end in Colab.
 
 ---
 
@@ -640,16 +807,20 @@ knowledgereduce/
 │   ├── store.py / catalog.py      # Existing
 │   ├── cli.py                     # Extended: model-probe, model-distill, graveyard, model-eval
 │   │
-│   ├── model_probe.py          ◀── NEW (Session 1)
-│   ├── probe_templates.py      ◀── NEW (Session 1)
-│   ├── model_drop.py           ◀── NEW (Session 2)
-│   ├── cross_model.py          ◀── NEW (Session 2)
-│   ├── model_distill.py        ◀── NEW (Session 3)
-│   ├── model_eval.py           ◀── NEW (Session 5)
-│   ├── graph_tool.py           ◀── NEW (Session 6)
+│   ├── schemas.py                 ◀── NEW (Session 1) — Pydantic schemas, PROBE_OUTPUT_SCHEMA
+│   ├── model_probe.py             ◀── NEW (Session 1) — OllamaBackend with structured output
+│   ├── probe_templates.py         ◀── NEW (Session 1) — 5 domain-parameterized templates
+│   ├── embeddings.py              ◀── NEW (Session 1/2) — LocalEmbedder (mxbai-embed-large)
+│   ├── model_drop.py              ◀── NEW (Session 2)
+│   ├── cross_model.py             ◀── NEW (Session 2) — CrossModelVerifier + lineage
+│   ├── knowledge_block.py         ◀── NEW (Session 3) — KnowledgeBlock v1 Pydantic model
+│   ├── model_distill.py           ◀── NEW (Session 3) — ModelKnowledgeDistiller
+│   ├── model_eval.py              ◀── NEW (Session 5) — Embeddings-based evaluator
+│   ├── kuzu_store.py              ◀── NEW (Session 6) — KùzuDB wrapper
+│   ├── graph_tool.py              ◀── NEW (Session 6) — LLM-callable graph tools
 │   │
 │   └── data/
-│       ├── gold_biochem.json
+│       ├── gold_biochem.json      # SVO format
 │       ├── gold_physics.json
 │       ├── gold_law.json
 │       ├── gold_coding.json
@@ -660,16 +831,19 @@ knowledgereduce/
 │
 ├── tests/
 │   ├── test_model_probe.py
+│   ├── test_embeddings.py
 │   ├── test_cross_model.py
+│   ├── test_knowledge_block.py
 │   ├── test_model_distill.py
-│   ├── test_graveyard.py
-│   └── test_model_eval.py
+│   ├── test_kuzu_store.py
+│   ├── test_model_eval.py
+│   └── test_graveyard.py
 │
 ├── Dockerfile                        ◀── NEW (Session 8)
 ├── .github/workflows/model-reduce.yml ◀── NEW (Session 5/8)
 ├── MODELREDUCE_SESSIONS.md           # Session tracker
 ├── MODELREDUCE_MASTER_PLAN.md        # This file
-├── pyproject.toml                    # Updated with model-reduce extra
+├── pyproject.toml                    # Updated with model-reduce extra (kuzu, pydantic)
 └── README.md                         # Updated with ModelReduce section
 ```
 
@@ -679,13 +853,13 @@ knowledgereduce/
 
 | Milestone | Metric | Target |
 |-----------|--------|--------|
-| Session 1 | Probe 10 prompts on Ollama | ✓ No errors, structured output |
-| Session 2 | Cross-model verification | ✓ Agreement clusters, promotion works |
-| Session 3 | Distill → shards | ✓ 3 formats + manifest, CLI works |
-| Session 4 | Graveyard command | ✓ 5 models × 3 domains unattended |
-| Session 5 | Evaluation gates | ✓ CI passes on gold sets |
-| Session 6 | MCP server | ✓ LLM queries KG, gets facts |
-| Session 7 | Training run | ✓ +10% domain acc, -50% hallucination |
+| Session 1 | Probe 10 prompts with structured output | ✓ Valid JSON per schema, no parsing errors |
+| Session 2 | Cross-model verification (embeddings + lineage) | ✓ Cosine clusters, effective agreement computed |
+| Session 3 | KnowledgeBlock v1 emission | ✓ Pydantic validation passes, lineage_weight present |
+| Session 4 | Graveyard CLI | ✓ 3 models × 3 domains unattended, KnowledgeBlocks |
+| Session 5 | Evaluation gates (embeddings + lineage) | ✓ CI passes, min_lineage_diversity_verified met |
+| Session 6 | KùzuDB + MCP | ✓ Cypher queries + vector search via MCP |
+| Session 7 | LoRA training per domain | ✓ +10% domain acc, -50% hallucination vs base |
 | Session 8 | Release | ✓ Tutorial runs in Colab, PyPI install works |
 
 ---
