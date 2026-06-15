@@ -703,6 +703,130 @@ knowledgereduce/
 
 ---
 
+## Phase 2: Inference Layer (Post-Session 8)
+
+**Scope:** Build the runtime system that *uses* the ModelReduce artifacts (versioned blocks, LoRA adapters, KG query interface) to serve verified, low-hallucination answers.
+
+**Trigger:** Start after Session 8 ships — requires:
+- Canonical `KnowledgeBlock` v1 schema (Session 3)
+- LoRA adapters served via vLLM/S-LoRA (Session 7)
+- MCP query interface to KnowledgeGraph (Session 6)
+
+### Phase 2 Sessions (Future)
+
+| Session | Target | Deliverable |
+|---------|--------|-------------|
+| **9** | **Semantic Router** (`router.py`) | Query → target shard(s) + hydration manifest |
+| **10** | **Runtime Verifier** (`verifier.py`) | Draft answer → KG cross-check → correction |
+| **11** | **vLLM/S-LoRA Serving Config** | Hot-swap LoRA adapters per request |
+| **12** | **Unified API Gateway** | Single endpoint: query → router → adapter → verifier → answer |
+
+---
+
+### Session 9: Semantic Router
+**Target:** `knowledge_graph_pkg/router.py`
+
+**Function:** Classify incoming query, emit execution manifest:
+```json
+{
+  "query": "How does ATP synthesis work in mitochondria?",
+  "target_shards": ["biochem_v1", "cell_bio_v2"],
+  "hydration_plan": [
+    {"block_id": "kb_biochem_00421", "reason": "direct_answer"},
+    {"block_id": "kb_biochem_00312", "reason": "context"}
+  ],
+  "adapter": "biochem_lora_v1",
+  "verification_mode": "strict"
+}
+```
+
+**Approach:** Fine-tune a tiny classifier (1B-3B params) on synthetic query→shard pairs generated from KnowledgeGraph. Latency target: <50ms.
+
+---
+
+### Session 10: Runtime Verifier
+**Target:** `knowledge_graph_pkg/verifier.py`
+
+**Function:** Post-generation guardrail:
+```python
+def verify(draft: str, hydration_blocks: List[KnowledgeBlock]) -> VerifiedAnswer:
+    # 1. Extract claims from draft (SVOExtractor)
+    # 2. Match claims to hydration_blocks (Jaccard + embedding)
+    # 3. For each claim: VERIFIED / CONTRADICTED / UNGROUNDED
+    # 4. Rewrite ungrounded/contradicted spans using block text
+    return VerifiedAnswer(text=corrected, citations=[...], flags=[...])
+```
+
+**Integration:** Wraps any LLM output; works with base model + LoRA or router-chosen adapter.
+
+---
+
+### Session 11: vLLM/S-LoRA Serving
+**Target:** `serving/vllm_config.py`, `serving/run_server.py`
+
+**Features:**
+- Base model (Llama-3-8B / Mistral-7B) stays loaded
+- Domain LoRAs loaded on-demand via `vLLM.add_lora()` / S-LoRA
+- Router (Session 9) selects adapter → verifier (Session 10) validates output
+- Metrics: adapter swap latency, VRAM usage, request throughput
+
+---
+
+### Session 12: Unified API Gateway
+**Target:** `api/gateway.py`, `api/schemas.py`
+
+**Single endpoint:**
+```bash
+POST /v1/ask
+{
+  "question": "What's the ATP yield per glucose in oxidative phosphorylation?",
+  "mode": "strict",  # strict | fast | creative
+  "domain_hint": "biochemistry"
+}
+```
+
+**Response:**
+```json
+{
+  "answer": "Oxidative phosphorylation yields ~26-28 ATP per glucose...",
+  "citations": [
+    {"block_id": "kb_biochem_00421", "statement": "...", "reliability": "VERIFIED"}
+  ],
+  "adapter_used": "biochem_lora_v1",
+  "verification": "PASSED",
+  "latency_ms": 342
+}
+```
+
+---
+
+### Phase 2 Dependency Graph
+
+```
+Session 8 (Data Layer Complete)
+    ↓
+Session 9 (Router) ← needs: KnowledgeBlock schema, KG query (MCP)
+    ↓
+Session 10 (Verifier) ← needs: KnowledgeBlock schema, SVOExtractor
+    ↓
+Session 11 (Serving) ← needs: LoRA adapters (Session 7), Router, Verifier
+    ↓
+Session 12 (Gateway) ← needs: all above
+```
+
+---
+
+### Phase 2 Success Criteria
+
+| Milestone | Metric | Target |
+|-----------|--------|--------|
+| Router | Query → correct shard top-1 | > 90% |
+| Verifier | Catches known hallucinations | > 95% recall |
+| Serving | LoRA swap latency | < 200ms |
+| Gateway | End-to-end strict mode | < 2s latency, < 1% hallucination |
+
+---
+
 ## Next Action
 
 **Start Session 1 now:**
