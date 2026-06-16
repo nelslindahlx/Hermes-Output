@@ -188,6 +188,21 @@ def _build_parser() -> argparse.ArgumentParser:
     gv.add_argument("--seed", type=int, default=42, help="Probe seed (default 42).")
     gv.add_argument("--no-resume", action="store_true",
                     help="Re-probe all pairs even if checkpointed as done.")
+
+    me = sub.add_parser("model-eval",
+                        help="Evaluate corroborated store facts against a domain gold set.")
+    me.add_argument("--store", default="store", help="Knowledge store directory.")
+    me.add_argument("--gold", required=True, help="Path to the gold set JSON.")
+    me.add_argument("--min-agreement", type=int, default=1,
+                    help="Min distinct-model agreement to include a fact (default 1).")
+    me.add_argument("--similarity", type=float, default=0.8,
+                    help="Clustering Jaccard threshold for corroboration (default 0.8).")
+    me.add_argument("--embed", action="store_true",
+                    help="Use Ollama embeddings for gold matching (else lenient strings).")
+    me.add_argument("--host", default="http://localhost:11434", help="Ollama host.")
+    me.add_argument("--output", default=None, help="Optional path to write the report JSON.")
+    me.add_argument("--ci", action="store_true",
+                    help="Exit non-zero if quality gates fail.")
     return parser
 
 
@@ -650,6 +665,58 @@ def _cmd_graveyard(args) -> int:
     return 0
 
 
+def _cmd_model_eval(args) -> int:
+    """Evaluate corroborated store facts against a domain gold set + gates."""
+    import os
+    from .store import KnowledgeStore
+    from .model_distill import ModelKnowledgeDistiller
+    from .model_eval import ModelShardEvaluator, check_gates, format_report
+
+    if not os.path.isdir(args.store):
+        print(f"error: store not found: {args.store}", file=sys.stderr)
+        return 2
+    if not os.path.isfile(args.gold):
+        print(f"error: gold set not found: {args.gold}", file=sys.stderr)
+        return 2
+
+    store = KnowledgeStore(args.store)
+
+    embedder = None
+    if args.embed:
+        try:
+            from .embeddings import LocalEmbedder
+            embedder = LocalEmbedder(host=args.host)
+        except Exception as exc:  # noqa: BLE001
+            print(f"warning: embeddings unavailable ({exc}); using string matching.",
+                  file=sys.stderr)
+
+    distiller = ModelKnowledgeDistiller.from_store(
+        store, min_agreement=args.min_agreement, min_reliability="POSSIBLY_TRUE",
+        similarity_threshold=args.similarity, embedder=embedder)
+    shard_facts = distiller.select_facts()
+
+    evaluator = ModelShardEvaluator(embedder=embedder)
+    report = evaluator.evaluate(shard_facts, args.gold)
+    print(format_report(report))
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as fh:
+            import json as _json
+            _json.dump(report, fh, ensure_ascii=False, indent=2)
+
+    passed, failures = check_gates(report)
+    if failures:
+        print("\nQuality gates FAILED:")
+        for f in failures:
+            print(f"  - {f}")
+    else:
+        print("\nQuality gates passed.")
+
+    if args.ci and not passed:
+        return 1
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entrypoint. Returns a process exit code."""
     parser = _build_parser()
@@ -674,6 +741,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _cmd_model_distill(args)
     if args.command == "graveyard":
         return _cmd_graveyard(args)
+    if args.command == "model-eval":
+        return _cmd_model_eval(args)
     parser.print_help()
     return 1
 

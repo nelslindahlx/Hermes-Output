@@ -399,7 +399,7 @@ Session 8 (Docs + Release) ← needs Session 7
 | 2: ModelDrop + CrossModel | ✅ Done | `model_drop.py`, `cross_model.py`, `embeddings.py` | 1 |
 | 3: ModelDistill + CLI | ✅ Done | `model_distill.py`, CLI extensions | 2 |
 | 4: Graveyard CLI | ✅ Done | `graveyard.py`, `graveyard` command | 3 |
-| 5: Evaluation | ☐ Pending | `model_eval.py`, gold sets | 3 |
+| 5: Evaluation | ✅ Done | `model_eval.py`, `data/gold_biochem.json`, `model-eval` CLI | 3 |
 | 6: Graph Tools + MCP | ☐ Pending | `graph_tool.py`, MCP server | 1-3 |
 | 7: Training Run | ☐ Pending | Trained model + eval report | 4,5,6 |
 | 8: Docs + Release | ☐ Pending | Tutorial, PyPI package | 7 |
@@ -435,6 +435,31 @@ Live `model-probe` → `model-distill` worked end-to-end (2 models, biochemistry
 The distill machinery is sound; the issue is upstream in `probe_templates.py`.
 TODO (Session 4/5): either give the negative probe its own schema/handling, or
 drop it from the default probe mix and keep entity/relation/concept/list.
+
+### Session 5 finding (agreement calibration — HONEST RESULT)
+Built `model_eval.py` (ModelShardEvaluator: per-tier precision/recall/F1,
+hallucination rate vs gold negatives, coverage, agreement calibration) +
+`data/gold_biochem.json` (15 verified + 5 negative) + `model-eval` CLI with
+`--ci` gates. Also added embedder support to ModelKnowledgeDistiller so
+cross-model clustering is paraphrase-aware (was Jaccard-only → agreement stuck
+at 1).
+
+Live calibration, qwen2.5:7b + phi4:latest, biochemistry, 10 prompts each
+(90 raw facts → 7 corroborated via embedding clustering @0.82):
+  1-model precision = 0.60 (n=5)
+  2-model precision = 0.50 (n=2)
+  hallucination = 0.286, coverage = 0.267 → quality gates correctly FAILED.
+
+**The 2-model-agreement-implies-higher-precision hypothesis did NOT hold here.**
+Honest reasons: (1) n=2 in the agreement bucket is statistically meaningless;
+(2) embed threshold 0.82 may cluster non-identical claims → false agreement;
+(3) small quantized 7b/phi4 models produce confident-but-wrong biochem that
+agreement doesn't filter at low volume. The eval FRAMEWORK is correct and
+working — it measured reality instead of assuming. Real calibration needs
+MUCH larger probe volume (100s of prompts/model) and likely a tighter embed
+threshold (try 0.88-0.90). Do not trust agreement as a precision signal until
+re-calibrated at scale. This is the key input for Session 7 (don't train on
+this shard as-is).
 
 ---
 

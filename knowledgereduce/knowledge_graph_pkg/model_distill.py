@@ -70,7 +70,8 @@ class ModelKnowledgeDistiller:
                  min_reliability: str = "LIKELY_TRUE",
                  similarity_threshold: float = 0.8, dedup_threshold: float = 0.9,
                  quality_filter: Optional[FactQualityFilter] = None,
-                 top_k: Optional[int] = None):
+                 top_k: Optional[int] = None,
+                 embedder: Any = None, embed_threshold: float = 0.82):
         self.facts = list(facts)
         self.min_agreement = min_agreement
         self.min_reliability = min_reliability
@@ -78,6 +79,11 @@ class ModelKnowledgeDistiller:
         self.dedup_threshold = dedup_threshold
         self.quality_filter = quality_filter
         self.top_k = top_k
+        # Optional semantic embedder for paraphrase-aware cross-model
+        # clustering (else Jaccard word overlap, which misses paraphrases and
+        # keeps agreement artificially low).
+        self.embedder = embedder
+        self.embed_threshold = embed_threshold
         self._selected: Optional[List[Dict[str, Any]]] = None
 
     # ------------------------------------------------------------------ #
@@ -98,7 +104,9 @@ class ModelKnowledgeDistiller:
         if self._selected is not None:
             return self._selected
 
-        clusters = cluster_facts(self.facts, self.similarity_threshold)
+        clusters = cluster_facts(self.facts, self.similarity_threshold,
+                                 embedder=self.embedder,
+                                 embed_threshold=self.embed_threshold)
         min_rel_idx = _RELIABILITY_ORDER.index(self.min_reliability)
 
         promoted: List[Dict[str, Any]] = []
