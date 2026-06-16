@@ -41,6 +41,10 @@ nlp = ["spacy>=3.0.0"]
 viz = ["matplotlib>=3.3.0", "numpy>=1.19.0"]
 # Everything for development/testing.
 dev = ["pytest>=6.0.0", "pytest-cov>=2.12.0"]
+# ModelReduce: probe local models and distill their knowledge into shards.
+# v1 is Ollama-first; heavier backends (kuzu/vllm/transformers) are added in
+# later sessions as they are implemented.
+model-reduce = ["ollama>=0.3.0", "pydantic>=2.0"]
 
 [project.urls]
 Homepage = "https://github.com/nelslindahlx/Hermes-Output"

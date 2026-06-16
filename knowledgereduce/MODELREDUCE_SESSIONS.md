@@ -395,7 +395,7 @@ Session 8 (Docs + Release) ← needs Session 7
 
 | Session | Status | Key Output | Next Blocked By |
 |---------|--------|------------|-----------------|
-| 1: ModelProbe | ☐ Pending | `model_probe.py` | — |
+| 1: ModelProbe | ✅ Done | `model_probe.py`, `probe_templates.py`, `schemas.py` | — |
 | 2: ModelDrop + CrossModel | ☐ Pending | `model_drop.py`, `cross_model.py` | 1 |
 | 3: ModelDistill + CLI | ☐ Pending | `model_distill.py`, CLI extensions | 2 |
 | 4: Graveyard CLI | ☐ Pending | `graveyard` subcommand | 3 |
