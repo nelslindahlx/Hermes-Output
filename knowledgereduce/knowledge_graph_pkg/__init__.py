@@ -30,7 +30,8 @@ from .model_drop import (
     ModelDrop, probe_output_to_facts, probe_outputs_to_facts,
     model_fact_statement, model_content_hash,
 )
-from .cross_model import CrossModelVerifier, reliability_for_agreement, jaccard
+from .cross_model import CrossModelVerifier, reliability_for_agreement, jaccard, cluster_facts
+from .model_distill import ModelKnowledgeDistiller
 
 try:  # single source of truth: version comes from package metadata (pyproject)
     from importlib.metadata import version as _pkg_version, PackageNotFoundError
@@ -78,5 +79,7 @@ __all__ = [
     'model_content_hash',
     'CrossModelVerifier',
     'reliability_for_agreement',
-    'jaccard'
+    'jaccard',
+    'cluster_facts',
+    'ModelKnowledgeDistiller'
 ]

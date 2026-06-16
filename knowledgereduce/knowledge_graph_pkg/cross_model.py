@@ -57,6 +57,34 @@ def reliability_for_agreement(n_models: int) -> str:
     return _AGREEMENT_RELIABILITY.get(max(n_models, 0), "UNVERIFIED")
 
 
+def cluster_facts(facts: List[Dict[str, Any]],
+                  similarity_threshold: float = 0.8) -> List[List[Dict[str, Any]]]:
+    """Greedy single-pass clustering of facts by statement similarity.
+
+    Two facts join the same cluster when they share an identical normalized
+    (subject, predicate, object) triple (exact-match fast path, robust to
+    phrasing differences) OR their normalized statements' Jaccard similarity
+    meets ``similarity_threshold``. Order-stable: the first fact of each
+    cluster is its seed.
+    """
+    clusters: List[List[Dict[str, Any]]] = []
+    reps: List[Dict[str, str]] = []  # parallel: cached norm keys per cluster
+    for fact in facts:
+        stmt = _norm(fact.get("fact_statement"))
+        spo = "\x00".join((_norm(fact.get("subject")), _norm(fact.get("predicate")),
+                           _norm(fact.get("object"))))
+        placed = False
+        for idx, rep in enumerate(reps):
+            if rep["spo"] == spo or jaccard(stmt, rep["stmt"]) >= similarity_threshold:
+                clusters[idx].append(fact)
+                placed = True
+                break
+        if not placed:
+            clusters.append([fact])
+            reps.append({"stmt": stmt, "spo": spo})
+    return clusters
+
+
 class CrossModelVerifier:
     """Probe N models with identical prompts and corroborate their facts."""
 
@@ -151,33 +179,8 @@ class CrossModelVerifier:
 
     # ------------------------------------------------------------------ #
     def _cluster(self, facts: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
-        """Greedy single-pass clustering by statement similarity.
-
-        Two facts join the same cluster when their normalized statements'
-        Jaccard similarity meets ``similarity_threshold`` OR they share an
-        identical (subject, predicate, object) triple (exact-match fast path,
-        robust to phrasing differences).
-        """
-        clusters: List[List[Dict[str, Any]]] = []
-        reps: List[Dict[str, str]] = []  # parallel: cached norm keys per cluster
-        for fact in facts:
-            stmt = _norm(fact.get("fact_statement"))
-            spo = (_norm(fact.get("subject")), _norm(fact.get("predicate")),
-                   _norm(fact.get("object")))
-            placed = False
-            for idx, rep in enumerate(reps):
-                if rep["spo"] == "\x00".join(spo):
-                    clusters[idx].append(fact)
-                    placed = True
-                    break
-                if jaccard(stmt, rep["stmt"]) >= self.similarity_threshold:
-                    clusters[idx].append(fact)
-                    placed = True
-                    break
-            if not placed:
-                clusters.append([fact])
-                reps.append({"stmt": stmt, "spo": "\x00".join(spo)})
-        return clusters
+        """Cluster facts using this verifier's similarity threshold."""
+        return cluster_facts(facts, self.similarity_threshold)
 
     # ------------------------------------------------------------------ #
     def verified_facts(self, report: Dict[str, Any], min_models: int = 2) -> List[Dict[str, Any]]:

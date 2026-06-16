@@ -128,6 +128,51 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="promote: min distinct sources to corroborate (default 2).")
     lc.add_argument("--engine", choices=["svo", "spacy"], default="svo",
                     help="reextract: extraction engine (default svo).")
+
+    mp = sub.add_parser("model-probe",
+                        help="Probe local models for facts and store them as model drops.")
+    mp.add_argument("--models", required=True,
+                    help="Comma-separated model names (e.g. qwen2.5:14b,phi4:latest).")
+    mp.add_argument("--domains", required=True,
+                    help="Comma-separated domains to probe (e.g. biochem,physics).")
+    mp.add_argument("--store", default="store", help="Knowledge store directory.")
+    mp.add_argument("--n-prompts", type=int, default=10,
+                    help="Prompts per (model, domain) (default 10).")
+    mp.add_argument("--backend", choices=["ollama"], default="ollama",
+                    help="Probe backend (default ollama).")
+    mp.add_argument("--host", default="http://localhost:11434",
+                    help="Ollama host (default http://localhost:11434).")
+    mp.add_argument("--seed", type=int, default=42, help="Probe seed (default 42).")
+    mp.add_argument("--force", action="store_true",
+                    help="Write a drop even if this model+domain was already probed.")
+
+    md = sub.add_parser("model-distill",
+                        help="Distill cross-model-corroborated facts from the store into shards.")
+    md.add_argument("-o", "--output", required=True, help="Output file path.")
+    md.add_argument("--store", default="store", help="Knowledge store directory.")
+    md.add_argument("--format", choices=["chat", "instruction", "text"],
+                    default="chat", help="Output format (default chat).")
+    md.add_argument("--min-agreement", type=int, default=2,
+                    help="Min distinct models that must agree on a fact (default 2).")
+    md.add_argument("--min-reliability",
+                    choices=["possibly_true", "likely_true", "verified"],
+                    default="likely_true",
+                    help="Min promoted reliability to keep (default likely_true).")
+    md.add_argument("--similarity", type=float, default=0.8,
+                    help="Jaccard threshold for clustering facts across models (default 0.8).")
+    md.add_argument("--dedup", type=float, default=0.9,
+                    help="Dedup similarity threshold 0..1 (default 0.9; 0 disables).")
+    md.add_argument("--filter", choices=["none", "standard", "strict"],
+                    default="standard", help="Quality filter (default standard).")
+    md.add_argument("--max-object-len", type=int, default=80,
+                    help="Max object length for the quality filter (default 80).")
+    md.add_argument("--max-tokens", type=int, default=None,
+                    help="Cap output to ~N tokens (highest-ranked first).")
+    md.add_argument("--split", type=float, default=None,
+                    help="Train/val split ratio (writes <out> + <out>.val).")
+    md.add_argument("--seed", type=int, default=42, help="Split seed (default 42).")
+    md.add_argument("--manifest", default=None,
+                    help="Optional path to write a provenance manifest JSON.")
     return parser
 
 
@@ -447,6 +492,100 @@ def _cmd_lifecycle(args) -> int:
     return 0
 
 
+def _cmd_model_probe(args) -> int:
+    """Probe local models across domains; store each (model, domain) as a ModelDrop."""
+    from .store import KnowledgeStore
+    from .model_drop import ModelDrop
+    from .model_probe import ModelProbe, OllamaBackend
+
+    models = [m.strip() for m in args.models.split(",") if m.strip()]
+    domains = [d.strip() for d in args.domains.split(",") if d.strip()]
+    if not models or not domains:
+        print("error: --models and --domains must each name at least one item.",
+              file=sys.stderr)
+        return 2
+
+    store = KnowledgeStore(args.store)
+    total_drops = total_facts = skipped = 0
+    for model in models:
+        backend = OllamaBackend(model=model, host=args.host)
+        probe = ModelProbe(backend=backend, model=model)
+        for domain in domains:
+            outputs = probe.probe_domain(domain, n_prompts=args.n_prompts, seed=args.seed)
+            drop = ModelDrop.from_probe_outputs(model, domain, outputs,
+                                                backend=args.backend)
+            if not args.force and store.has_source_hash(drop.source_hash):
+                print(f"skip: {model}/{domain} already probed "
+                      f"(hash {drop.source_hash[:12]}); use --force to re-probe.")
+                skipped += 1
+                continue
+            store.write_drop(drop)
+            total_drops += 1
+            total_facts += len(drop.facts)
+            print(f"probed {model}/{domain}: {len(drop.facts)} facts "
+                  f"from {args.n_prompts} prompts.")
+
+    print(f"Done: {total_drops} drop(s), {total_facts} facts added "
+          f"({skipped} skipped). Store now has "
+          f"{store.stats()['total_drops']} drops, {store.stats()['total_facts']} facts.")
+    return 0
+
+
+def _cmd_model_distill(args) -> int:
+    import os
+    from .store import KnowledgeStore
+    from .model_distill import ModelKnowledgeDistiller
+
+    if not os.path.isdir(args.store):
+        print(f"error: store not found: {args.store}", file=sys.stderr)
+        return 2
+
+    min_rel = args.min_reliability.upper()
+    quality_filter = _make_filter(args.filter, args.max_object_len)
+    store = KnowledgeStore(args.store)
+    distiller = ModelKnowledgeDistiller.from_store(
+        store, min_agreement=args.min_agreement, min_reliability=min_rel,
+        similarity_threshold=args.similarity, dedup_threshold=args.dedup,
+        quality_filter=quality_filter)
+
+    serializer = {
+        "chat": distiller.to_chat_jsonl,
+        "instruction": distiller.to_instruction_jsonl,
+        "text": distiller.to_text,
+    }[args.format]
+    records = [ln for ln in serializer().splitlines() if ln.strip()]
+
+    if args.max_tokens is not None:
+        from .export import budget_records
+        records = budget_records(records, args.max_tokens)
+
+    def _write(path, lines):
+        with open(path, "w", encoding="utf-8") as fh:
+            for ln in lines:
+                fh.write(ln + "\n")
+
+    if args.manifest:
+        with open(args.manifest, "w", encoding="utf-8") as fh:
+            import json as _json
+            _json.dump(distiller.manifest(os.path.basename(args.output)), fh,
+                       ensure_ascii=False, indent=2)
+
+    if args.split is not None:
+        from .export import split_records
+        train, val = split_records(records, ratio=args.split, seed=args.seed)
+        _write(args.output, train)
+        _write(args.output + ".val", val)
+        print(f"Distilled {len(records)} corroborated facts -> {len(train)} train "
+              f"({args.output}) + {len(val)} val ({args.output}.val).")
+    else:
+        _write(args.output, records)
+        m = distiller.manifest()
+        print(f"Distilled {len(records)} corroborated facts -> {args.output} "
+              f"(VERIFIED={m['verified']}, LIKELY_TRUE={m['likely_true']}, "
+              f"models={m['models']}).")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entrypoint. Returns a process exit code."""
     parser = _build_parser()
@@ -465,6 +604,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _cmd_batch(args)
     if args.command == "lifecycle":
         return _cmd_lifecycle(args)
+    if args.command == "model-probe":
+        return _cmd_model_probe(args)
+    if args.command == "model-distill":
+        return _cmd_model_distill(args)
     parser.print_help()
     return 1
 

@@ -397,7 +397,7 @@ Session 8 (Docs + Release) ← needs Session 7
 |---------|--------|------------|-----------------|
 | 1: ModelProbe | ✅ Done | `model_probe.py`, `probe_templates.py`, `schemas.py` | — |
 | 2: ModelDrop + CrossModel | ✅ Done | `model_drop.py`, `cross_model.py` | — |
-| 3: ModelDistill + CLI | ☐ Pending | `model_distill.py`, CLI extensions | 2 |
+| 3: ModelDistill + CLI | ✅ Done | `model_distill.py`, `model-probe`/`model-distill` CLI | — |
 | 4: Graveyard CLI | ☐ Pending | `graveyard` subcommand | 3 |
 | 5: Evaluation | ☐ Pending | `model_eval.py`, gold sets | 3 |
 | 6: Graph Tools + MCP | ☐ Pending | `graph_tool.py`, MCP server | 1-3 |
@@ -425,6 +425,16 @@ fire on matching facts). Session 5 must **calibrate** this — options: (a) lowe
 threshold + measure precision against a gold set, (b) cluster on normalized SPO
 (lemmatized subject/object) rather than full statement, (c) embedding similarity
 as an opt-in extra. Do NOT hard-lower the default blindly; calibrate against gold.
+
+### Session 3 finding (probe-template wording)
+Live `model-probe` → `model-distill` worked end-to-end (2 models, biochemistry,
+4 prompts → 2 ModelDrops/3 facts → shard with provenance metadata). But the
+`negative`/misconception probe template yields garbled SPO when the model's
+"common misconception … correct fact" answer is forced through the SPO schema
+(e.g. subject="Biochemistry", predicate="common misconception", object=run-on).
+The distill machinery is sound; the issue is upstream in `probe_templates.py`.
+TODO (Session 4/5): either give the negative probe its own schema/handling, or
+drop it from the default probe mix and keep entity/relation/concept/list.
 
 ---
 

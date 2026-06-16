@@ -213,3 +213,68 @@ def test_lifecycle_reextract_runs(tmp_path, capsys):
     rc = main(["lifecycle", "reextract", "--store", str(store)])
     assert rc == 0
     assert "re-extraction" in capsys.readouterr().out.lower()
+
+
+# ---------- model-distill (ModelReduce Session 3) ----------
+
+def _seed_model_store(store_dir):
+    """Populate a store with two models independently asserting one fact."""
+    from knowledge_graph_pkg.store import KnowledgeStore
+    from knowledge_graph_pkg.model_drop import ModelDrop
+
+    def po(model, subject, predicate, obj):
+        return {"model": model, "backend": "fake", "domain": "biochemistry",
+                "prompt": "p", "prompt_type": "entity",
+                "structured_response": {"facts": [
+                    {"subject": subject, "predicate": predicate, "object": obj,
+                     "confidence": 0.9}]}}
+
+    store = KnowledgeStore(str(store_dir))
+    store.write_drop(ModelDrop.from_probe_outputs(
+        "model-a", "biochemistry", [po("model-a", "Mitochondria", "produce", "ATP")]))
+    store.write_drop(ModelDrop.from_probe_outputs(
+        "model-b", "biochemistry", [po("model-b", "Mitochondria", "produce", "ATP")]))
+    return store
+
+
+def test_model_distill_chat_writes_corroborated_facts(tmp_path):
+    store = tmp_path / "store"
+    _seed_model_store(store)
+    out = tmp_path / "shard.jsonl"
+    rc = main(["model-distill", "-o", str(out), "--store", str(store),
+               "--format", "chat", "--min-agreement", "2"])
+    assert rc == 0
+    lines = [l for l in out.read_text().splitlines() if l.strip()]
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["metadata"]["agreement"] == 2
+    assert rec["metadata"]["reliability"] == "LIKELY_TRUE"
+
+
+def test_model_distill_writes_manifest(tmp_path):
+    store = tmp_path / "store"
+    _seed_model_store(store)
+    out = tmp_path / "shard.jsonl"
+    manifest = tmp_path / "manifest.json"
+    rc = main(["model-distill", "-o", str(out), "--store", str(store),
+               "--manifest", str(manifest), "--min-agreement", "2"])
+    assert rc == 0
+    m = json.loads(manifest.read_text())
+    assert m["likely_true"] == 1
+    assert set(m["models"]) == {"model-a", "model-b"}
+
+
+def test_model_distill_missing_store(tmp_path):
+    rc = main(["model-distill", "-o", str(tmp_path / "x.jsonl"),
+               "--store", str(tmp_path / "nope")])
+    assert rc != 0
+
+
+def test_model_distill_split(tmp_path):
+    store = tmp_path / "store"
+    _seed_model_store(store)
+    out = tmp_path / "s.jsonl"
+    rc = main(["model-distill", "-o", str(out), "--store", str(store),
+               "--min-agreement", "2", "--split", "0.5"])
+    assert rc == 0
+    assert out.exists() and (tmp_path / "s.jsonl.val").exists()
