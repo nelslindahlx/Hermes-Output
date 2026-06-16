@@ -173,6 +173,21 @@ def _build_parser() -> argparse.ArgumentParser:
     md.add_argument("--seed", type=int, default=42, help="Split seed (default 42).")
     md.add_argument("--manifest", default=None,
                     help="Optional path to write a provenance manifest JSON.")
+
+    gv = sub.add_parser("graveyard",
+                        help="Batch-probe a fleet of models across domains into the store.")
+    gv.add_argument("--models", default=None,
+                    help="Comma-separated models; omit to auto-discover local Ollama models.")
+    gv.add_argument("--domains", required=True,
+                    help="Comma-separated domains to probe.")
+    gv.add_argument("--store", default="store", help="Knowledge store directory.")
+    gv.add_argument("--n-prompts", type=int, default=10,
+                    help="Prompts per (model, domain) (default 10).")
+    gv.add_argument("--host", default="http://localhost:11434",
+                    help="Ollama host (default http://localhost:11434).")
+    gv.add_argument("--seed", type=int, default=42, help="Probe seed (default 42).")
+    gv.add_argument("--no-resume", action="store_true",
+                    help="Re-probe all pairs even if checkpointed as done.")
     return parser
 
 
@@ -586,6 +601,55 @@ def _cmd_model_distill(args) -> int:
     return 0
 
 
+def _cmd_graveyard(args) -> int:
+    """Batch-probe models x domains into the store, with resume + report."""
+    from .store import KnowledgeStore
+    from .model_drop import ModelDrop
+    from .model_probe import ModelProbe, OllamaBackend
+    from .graveyard import run_graveyard, discover_ollama_models
+
+    domains = [d.strip() for d in args.domains.split(",") if d.strip()]
+    if not domains:
+        print("error: --domains must name at least one domain.", file=sys.stderr)
+        return 2
+
+    if args.models:
+        models = [m.strip() for m in args.models.split(",") if m.strip()]
+    else:
+        try:
+            models = discover_ollama_models(host=args.host)
+        except Exception as exc:  # noqa: BLE001
+            print(f"error: could not auto-discover models: {exc}", file=sys.stderr)
+            return 3
+        if not models:
+            print("error: no local models discovered; pass --models explicitly.",
+                  file=sys.stderr)
+            return 2
+        print(f"Discovered {len(models)} model(s): {', '.join(models)}")
+
+    # Ollama-backed prober: probe one (model, domain), write a ModelDrop,
+    # return the fact count. Idempotency is handled by the orchestrator's
+    # checkpoint; we also guard on the store's content hash.
+    def _prober(model, domain, store, n_prompts=10, seed=42, **kw):
+        backend = OllamaBackend(model=model, host=args.host)
+        probe = ModelProbe(backend=backend, model=model)
+        outputs = probe.probe_domain(domain, n_prompts=n_prompts, seed=seed)
+        drop = ModelDrop.from_probe_outputs(model, domain, outputs, backend="ollama")
+        if store.has_source_hash(drop.source_hash):
+            return 0
+        store.write_drop(drop)
+        return len(drop.facts)
+
+    report = run_graveyard(
+        models=models, domains=domains, store_dir=args.store,
+        prober=_prober, resume=not args.no_resume,
+        n_prompts=args.n_prompts, seed=args.seed, progress=True,
+    )
+    print()
+    print(report.render())
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entrypoint. Returns a process exit code."""
     parser = _build_parser()
@@ -608,6 +672,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _cmd_model_probe(args)
     if args.command == "model-distill":
         return _cmd_model_distill(args)
+    if args.command == "graveyard":
+        return _cmd_graveyard(args)
     parser.print_help()
     return 1
 

@@ -15,6 +15,31 @@ import pytest
 from knowledge_graph_pkg.cli import main
 
 
+def test_graveyard_missing_domains_errs(tmp_path):
+    # no --domains -> argparse error (SystemExit), not a clean run
+    with pytest.raises(SystemExit):
+        main(["graveyard", "--models", "m1", "--store", str(tmp_path / "s")])
+
+
+def test_graveyard_runs_with_injected_prober(tmp_path, monkeypatch):
+    # Patch the Ollama-backed prober path so no server is needed: replace
+    # run_graveyard's prober by patching ModelProbe/OllamaBackend is heavy;
+    # instead drive the orchestrator directly to confirm wiring + report.
+    from knowledge_graph_pkg.graveyard import run_graveyard
+
+    calls = []
+
+    def fake_prober(model, domain, store, **kw):
+        calls.append((model, domain))
+        return 2
+
+    report = run_graveyard(["m1", "m2"], ["d1"], str(tmp_path / "store"),
+                           prober=fake_prober)
+    assert report.probed == 2
+    assert report.total_facts == 4
+    assert len(calls) == 2
+
+
 @pytest.fixture
 def sample_text(tmp_path):
     p = tmp_path / "src.txt"

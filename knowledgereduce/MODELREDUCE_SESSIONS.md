@@ -398,7 +398,7 @@ Session 8 (Docs + Release) ← needs Session 7
 | 1: ModelProbe | ✅ Done | `model_probe.py`, `probe_templates.py`, `schemas.py` | — |
 | 2: ModelDrop + CrossModel | ✅ Done | `model_drop.py`, `cross_model.py`, `embeddings.py` | 1 |
 | 3: ModelDistill + CLI | ✅ Done | `model_distill.py`, CLI extensions | 2 |
-| 4: Graveyard CLI | ☐ Pending | `graveyard` subcommand | 3 |
+| 4: Graveyard CLI | ✅ Done | `graveyard.py`, `graveyard` command | 3 |
 | 5: Evaluation | ☐ Pending | `model_eval.py`, gold sets | 3 |
 | 6: Graph Tools + MCP | ☐ Pending | `graph_tool.py`, MCP server | 1-3 |
 | 7: Training Run | ☐ Pending | Trained model + eval report | 4,5,6 |
