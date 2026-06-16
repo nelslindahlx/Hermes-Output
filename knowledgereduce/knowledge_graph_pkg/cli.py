@@ -203,6 +203,24 @@ def _build_parser() -> argparse.ArgumentParser:
     me.add_argument("--output", default=None, help="Optional path to write the report JSON.")
     me.add_argument("--ci", action="store_true",
                     help="Exit non-zero if quality gates fail.")
+
+    gi = sub.add_parser("graph-ingest",
+                        help="Load corroborated store facts into a KùzuDB graph.")
+    gi.add_argument("--store", default="store", help="Knowledge store directory.")
+    gi.add_argument("--graph-db", default="graph_db", help="KùzuDB path (default graph_db).")
+    gi.add_argument("--min-agreement", type=int, default=1,
+                    help="Min distinct-model agreement to include (default 1).")
+    gi.add_argument("--similarity", type=float, default=0.8,
+                    help="Clustering Jaccard threshold (default 0.8).")
+    gi.add_argument("--embed", action="store_true",
+                    help="Use embeddings for cross-model clustering.")
+    gi.add_argument("--host", default="http://localhost:11434", help="Ollama host.")
+
+    sm = sub.add_parser("serve-mcp",
+                        help="Serve the graph as LLM-callable tools over HTTP+JSON.")
+    sm.add_argument("--graph-db", default="graph_db", help="KùzuDB path (default graph_db).")
+    sm.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
+    sm.add_argument("--port", type=int, default=8080, help="Bind port (default 8080).")
     return parser
 
 
@@ -717,6 +735,49 @@ def _cmd_model_eval(args) -> int:
     return 0
 
 
+def _cmd_graph_ingest(args) -> int:
+    """Distill corroborated facts from the store and load them into KùzuDB."""
+    import os
+    from .store import KnowledgeStore
+    from .model_distill import ModelKnowledgeDistiller
+    if not os.path.isdir(args.store):
+        print(f"error: store not found: {args.store}", file=sys.stderr)
+        return 2
+    try:
+        from .kuzu_store import KuzuStore
+    except ImportError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 3
+
+    embedder = None
+    if args.embed:
+        try:
+            from .embeddings import LocalEmbedder
+            embedder = LocalEmbedder(host=args.host)
+        except Exception as exc:  # noqa: BLE001
+            print(f"warning: embeddings unavailable ({exc}); using Jaccard.",
+                  file=sys.stderr)
+
+    store = KnowledgeStore(args.store)
+    distiller = ModelKnowledgeDistiller.from_store(
+        store, min_agreement=args.min_agreement, min_reliability="POSSIBLY_TRUE",
+        similarity_threshold=args.similarity, embedder=embedder)
+    facts = distiller.select_facts()
+
+    kstore = KuzuStore(args.graph_db)
+    kstore.ingest_facts(facts)
+    print(f"Ingested {len(facts)} facts into KùzuDB at {args.graph_db} "
+          f"(graph now has {kstore.count()} facts).")
+    return 0
+
+
+def _cmd_serve_mcp(args) -> int:
+    """Start the HTTP graph-tool server."""
+    from .mcp_server import serve
+    serve(args.graph_db, host=args.host, port=args.port)
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entrypoint. Returns a process exit code."""
     parser = _build_parser()
@@ -743,6 +804,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _cmd_graveyard(args)
     if args.command == "model-eval":
         return _cmd_model_eval(args)
+    if args.command == "graph-ingest":
+        return _cmd_graph_ingest(args)
+    if args.command == "serve-mcp":
+        return _cmd_serve_mcp(args)
     parser.print_help()
     return 1
 
