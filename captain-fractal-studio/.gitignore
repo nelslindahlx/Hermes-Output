@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+key_2_dictionary_test.json
