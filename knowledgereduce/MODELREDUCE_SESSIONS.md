@@ -396,7 +396,7 @@ Session 8 (Docs + Release) ← needs Session 7
 | Session | Status | Key Output | Next Blocked By |
 |---------|--------|------------|-----------------|
 | 1: ModelProbe | ✅ Done | `model_probe.py`, `probe_templates.py`, `schemas.py` | — |
-| 2: ModelDrop + CrossModel | ☐ Pending | `model_drop.py`, `cross_model.py` | 1 |
+| 2: ModelDrop + CrossModel | ✅ Done | `model_drop.py`, `cross_model.py` | — |
 | 3: ModelDistill + CLI | ☐ Pending | `model_distill.py`, CLI extensions | 2 |
 | 4: Graveyard CLI | ☐ Pending | `graveyard` subcommand | 3 |
 | 5: Evaluation | ☐ Pending | `model_eval.py`, gold sets | 3 |
@@ -414,6 +414,17 @@ Session 8 (Docs + Release) ← needs Session 7
 - **Keep core dependency-free** — lazy import all model backends
 - **Reuse existing patterns** — `SVOExtractor`, `KnowledgeDistiller`, `FactQualityFilter`, `KnowledgeStore`
 - **Provenance first** — every fact must trace back to model + prompt + generation config
+
+### Session 2 finding (calibration TODO for Session 5)
+Live run: qwen2.5:7b + qwen2.5:14b, biochemistry, 4 prompts each → 15 facts,
+**0 cross-model clusters** at the default `similarity_threshold=0.8` + exact-SPO
+match. Cause: free-form model phrasing diverges ("produce ATP" vs "generate ATP
+through cellular respiration"), so Jaccard-on-statements rarely clears 0.8 across
+models. The agreement *logic* is correct (unit tests prove clustering + promotion
+fire on matching facts). Session 5 must **calibrate** this — options: (a) lower
+threshold + measure precision against a gold set, (b) cluster on normalized SPO
+(lemmatized subject/object) rather than full statement, (c) embedding similarity
+as an opt-in extra. Do NOT hard-lower the default blindly; calibrate against gold.
 
 ---
 

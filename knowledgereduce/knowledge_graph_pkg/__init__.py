@@ -26,6 +26,11 @@ from .store import KnowledgeStore, Drop, content_hash, SCHEMA_VERSION
 from .catalog import Catalog
 from .lifecycle import promote_reliability, find_contradictions, reextract_store
 from .factory import batch_drop, scan_folder
+from .model_drop import (
+    ModelDrop, probe_output_to_facts, probe_outputs_to_facts,
+    model_fact_statement, model_content_hash,
+)
+from .cross_model import CrossModelVerifier, reliability_for_agreement, jaccard
 
 try:  # single source of truth: version comes from package metadata (pyproject)
     from importlib.metadata import version as _pkg_version, PackageNotFoundError
@@ -65,5 +70,13 @@ __all__ = [
     'find_contradictions',
     'reextract_store',
     'batch_drop',
-    'scan_folder'
+    'scan_folder',
+    'ModelDrop',
+    'probe_output_to_facts',
+    'probe_outputs_to_facts',
+    'model_fact_statement',
+    'model_content_hash',
+    'CrossModelVerifier',
+    'reliability_for_agreement',
+    'jaccard'
 ]
