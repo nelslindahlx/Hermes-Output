@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "drops": [
+    {
+      "drop_id": "model-qwen2.5_7b-physics-0e72d77a09b5",
+      "source": "qwen2.5:7b",
+      "source_hash": "0e72d77a09b52b54374dcad6625cdd620560b98068984a987e4ec39bf69bdb6e",
+      "created_at": "2026-06-16T14:41:00Z",
+      "engine": "model-probe",
+      "filter_name": "standard",
+      "coref": false,
+      "num_facts": 10,
+      "schema_version": 1,
+      "model": "qwen2.5:7b",
+      "domain": "physics",
+      "shard": "shards/2026/06/model-qwen2.5_7b-physics-0e72d77a09b5.jsonl"
+    }
+  ]
+}
