@@ -1,8 +1,54 @@
 # ModelReduce: Master Implementation Plan
 
-**Status:** Ready for Session 1  
-**Package:** `/Users/nelslindahl/Hermes-Output/knowledgereduce/`  
+**Status:** ✅ COMPLETE — all 8 sessions shipped (v0.3.0, CI green)
+**Package:** `/Users/nelslindahl/Hermes-Output/knowledgereduce/`
 **Philosophy:** Models are ore. KnowledgeReduce is the refinery. Shards are pure metal.
+
+---
+
+## Completion Status (updated)
+
+All 8 planned sessions are implemented, tested, committed, and CI-verified.
+The repo is tagged **v0.3.0**. Full suite: **256 passed, 1 skipped**.
+
+| # | Session | Shipped |
+|---|---------|---------|
+| 1 | ModelProbe | `model_probe.py`, `probe_templates.py`, `schemas.py` |
+| 2 | ModelDrop + CrossModel | `model_drop.py`, `cross_model.py`, `embeddings.py` (mxbai-embed-large) |
+| 3 | ModelDistill + CLI | `model_distill.py`, `model-probe`/`model-distill` |
+| 4 | Graveyard CLI | `graveyard.py`, resume/checkpoint, auto-discovery |
+| 5 | Evaluation | `model_eval.py`, `data/gold_biochem.json`, `model-eval --ci` gates |
+| 6 | Graph Tools + MCP | `kuzu_store.py`, `graph_tool.py`, `mcp_server.py`, `graph-ingest`/`serve-mcp` |
+| 7 | Training (pipeline) | `training_prep.py`, `model-prep`, `scripts/train_sft.py`, `docs/model_reduce_training.md` |
+| 8 | Docs + Release | README ModelReduce section, training doc, **v0.3.0 tag** |
+
+### What was deliberately NOT done (honest scope)
+- **No real LoRA training run.** Session 7 ships the full prepare→train→eval
+  *pipeline* (with `--dry-run`) but the actual fine-tune is not executed: a
+  fanless M3 Air cannot train a 7B model in reasonable time, and the heavy
+  deps (torch/transformers/peft/trl) are intentionally kept out of the package
+  and CI. Run `scripts/train_sft.py` on a CUDA GPU when ready.
+
+### Key empirical finding (Session 5 calibration — must read before training)
+On a live qwen2.5:7b + phi4 biochemistry run, **cross-model agreement did NOT
+yet predict precision** (2-model 0.50 vs 1-model 0.60; hallucination 0.286).
+Causes: tiny agreement-bucket sample (n=2), embed threshold (0.82) likely
+over-clusters, and small quantized models hallucinate confidently. The
+`model-eval --ci` quality gates **correctly FAIL** the demo shard. **Do not
+train on a shard that fails the gates.** A trustworthy shard needs: hundreds
+of prompts per model, a tighter embed threshold (~0.88), and more than two
+models spanning distinct lineages. The framework to measure all of this now
+exists — that was the point.
+
+### How to run the full pipeline (real usage)
+```
+knowledgereduce graveyard --domains biochemistry,physics --n-prompts 200   # probe fleet
+knowledgereduce model-eval --store store --gold data/gold_biochem.json --embed --ci  # gate
+knowledgereduce model-distill -o shard.jsonl --store store --min-agreement 2 --format chat
+knowledgereduce model-prep shard.jsonl -o train.jsonl --min-reliability likely_true
+knowledgereduce graph-ingest --store store --graph-db graph_db   # optional: query layer
+python scripts/train_sft.py --dataset train.jsonl --dry-run      # then on a GPU, drop --dry-run
+```
 
 ---
 
