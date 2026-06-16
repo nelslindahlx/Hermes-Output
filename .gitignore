@@ -5,3 +5,7 @@ venv/
 .env
 .DS_Store
 .ipynb_checkpoints/
+
+# Local-only project folder, not tracked in this repo
+captain-fractal-studio/
+
