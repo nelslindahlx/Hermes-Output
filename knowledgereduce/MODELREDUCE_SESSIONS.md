@@ -401,7 +401,7 @@ Session 8 (Docs + Release) ← needs Session 7
 | 4: Graveyard CLI | ✅ Done | `graveyard.py`, `graveyard` command | 3 |
 | 5: Evaluation | ✅ Done | `model_eval.py`, `data/gold_biochem.json`, `model-eval` CLI | 3 |
 | 6: Graph Tools + MCP | ✅ Done | `kuzu_store.py`, `graph_tool.py`, `mcp_server.py`, `graph-ingest`/`serve-mcp` CLI | 1-3 |
-| 7: Training Run | ☐ Pending | Trained model + eval report | 4,5,6 |
+| 7: Training Run | ✅ Done (pipeline) | `training_prep.py`, `scripts/train_sft.py`, `model-prep` CLI, `docs/model_reduce_training.md` | 4,5,6 |
 | 8: Docs + Release | ☐ Pending | Tutorial, PyPI package | 7 |
 
 ---

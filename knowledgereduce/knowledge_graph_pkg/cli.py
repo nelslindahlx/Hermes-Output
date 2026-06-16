@@ -221,6 +221,15 @@ def _build_parser() -> argparse.ArgumentParser:
     sm.add_argument("--graph-db", default="graph_db", help="KùzuDB path (default graph_db).")
     sm.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
     sm.add_argument("--port", type=int, default=8080, help="Bind port (default 8080).")
+
+    pr = sub.add_parser("model-prep",
+                        help="Validate/filter a chat-JSONL shard into a training-ready SFT dataset.")
+    pr.add_argument("input", help="Input chat-JSONL shard (e.g. from model-distill).")
+    pr.add_argument("-o", "--output", required=True, help="Output SFT dataset path.")
+    pr.add_argument("--min-reliability",
+                    choices=["unverified", "possibly_true", "likely_true", "verified"],
+                    default=None, help="Drop records below this reliability tier.")
+    pr.add_argument("--stats", action="store_true", help="Print dataset stats after prep.")
     return parser
 
 
@@ -778,6 +787,26 @@ def _cmd_serve_mcp(args) -> int:
     return 0
 
 
+def _cmd_model_prep(args) -> int:
+    """Validate/filter a chat-JSONL shard into a training-ready SFT dataset."""
+    import os
+    from .training_prep import prepare_sft_dataset, dataset_stats
+    if not os.path.isfile(args.input):
+        print(f"error: input not found: {args.input}", file=sys.stderr)
+        return 2
+    min_rel = args.min_reliability.upper() if args.min_reliability else None
+    report = prepare_sft_dataset(args.input, args.output, min_reliability=min_rel)
+    print(f"Prepared {report['kept']} SFT records -> {args.output} "
+          f"({report['dropped']} dropped of {report['total']}).")
+    if args.stats:
+        stats = dataset_stats(args.output)
+        print(f"  records:          {stats['records']}")
+        print(f"  by reliability:   {stats['by_reliability']}")
+        print(f"  avg user chars:   {stats['avg_user_chars']}")
+        print(f"  avg asst chars:   {stats['avg_assistant_chars']}")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """CLI entrypoint. Returns a process exit code."""
     parser = _build_parser()
@@ -808,6 +837,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _cmd_graph_ingest(args)
     if args.command == "serve-mcp":
         return _cmd_serve_mcp(args)
+    if args.command == "model-prep":
+        return _cmd_model_prep(args)
     parser.print_help()
     return 1
 
