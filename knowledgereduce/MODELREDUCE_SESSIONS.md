@@ -396,8 +396,8 @@ Session 8 (Docs + Release) ← needs Session 7
 | Session | Status | Key Output | Next Blocked By |
 |---------|--------|------------|-----------------|
 | 1: ModelProbe | ✅ Done | `model_probe.py`, `probe_templates.py`, `schemas.py` | — |
-| 2: ModelDrop + CrossModel | ✅ Done | `model_drop.py`, `cross_model.py` | — |
-| 3: ModelDistill + CLI | ✅ Done | `model_distill.py`, `model-probe`/`model-distill` CLI | — |
+| 2: ModelDrop + CrossModel | ✅ Done | `model_drop.py`, `cross_model.py`, `embeddings.py` | 1 |
+| 3: ModelDistill + CLI | ✅ Done | `model_distill.py`, CLI extensions | 2 |
 | 4: Graveyard CLI | ☐ Pending | `graveyard` subcommand | 3 |
 | 5: Evaluation | ☐ Pending | `model_eval.py`, gold sets | 3 |
 | 6: Graph Tools + MCP | ☐ Pending | `graph_tool.py`, MCP server | 1-3 |

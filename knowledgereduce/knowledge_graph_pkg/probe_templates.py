@@ -19,18 +19,26 @@ import random
 from typing import Any, Dict, List
 
 PROMPT_TEMPLATES = {
-    "entity": "State a single verified, factual statement about {entity} in the field of {domain}.",
-    "relation": "What is the relationship between {e1} and {e2} in the field of {domain}? State it as a fact.",
-    "concept": "Explain the concept of {entity} in {domain} as three concise, verified facts.",
-    "list": "List five verified, factual statements about {domain}.",
-    "negative": "What is a common misconception about {domain}, and what is the correct fact?",
+    "entity": "State three distinct, verified factual statements about {entity} in the field of {domain}. Each fact must be a clear subject-predicate-object triple.",
+    "relation": "State the factual relationship between {e1} and {e2} in the field of {domain} as one or more subject-predicate-object facts.",
+    "concept": "Explain the concept of {entity} in {domain} as three concise, verified subject-predicate-object facts.",
+    "list": "List five verified, atomic facts about {entity} in {domain}. Each must be a distinct subject-predicate-object triple, not a sentence about {domain} itself.",
+    "negative": "Identify a common misconception about {entity} in {domain}, then state the CORRECT fact as a subject-predicate-object triple (give only the correct fact).",
 }
 
 PROMPT_TYPES = tuple(PROMPT_TEMPLATES.keys())
 
-# Probe types that require at least one seed entity.
-_NEEDS_ENTITY = {"entity", "concept"}
+# Probe types that require at least one seed entity. All entity-anchored
+# types now need an entity so the model produces atomic facts about a real
+# subject rather than prose about the domain (which yields degenerate
+# "Domain is ..." emissions).
+_NEEDS_ENTITY = {"entity", "concept", "list", "negative"}
 _NEEDS_TWO = {"relation"}
+
+# Default probe mix excludes 'negative': misconception prompts reliably
+# produce prose that does not fit the SVO schema cleanly. It stays available
+# for explicit error-mining but is opt-in via ``include_negative=True``.
+_DEFAULT_EXCLUDED = {"negative"}
 
 
 def render_prompt(prompt_type: str, **kwargs: Any) -> str:
@@ -47,12 +55,15 @@ def render_prompt(prompt_type: str, **kwargs: Any) -> str:
 
 
 def generate_probes(domain: str, entities: List[str], n_prompts: int = 10,
-                    seed: int = 42) -> List[Dict[str, Any]]:
+                    seed: int = 42, include_negative: bool = False) -> List[Dict[str, Any]]:
     """Build a deterministic, balanced list of probe specs for ``domain``.
 
-    Each spec is ``{"domain", "prompt_type", "prompt"}``. Entity-dependent
-    templates are only used when ``entities`` is non-empty; otherwise the
-    generator falls back to domain-level templates (list/negative).
+    Each spec is ``{"domain", "prompt_type", "prompt"}``. Entity-anchored
+    templates are used when ``entities`` is non-empty; with no entities the
+    generator falls back to a domain-level list probe. The ``negative``
+    (misconception) type is excluded by default -- it tends to produce prose
+    that doesn't fit the SVO schema -- and only included when
+    ``include_negative=True``.
     """
     rng = random.Random(seed)
     ents = list(entities or [])
@@ -60,17 +71,24 @@ def generate_probes(domain: str, entities: List[str], n_prompts: int = 10,
     # Which probe types are usable given the seed entities we have.
     usable = []
     for t in PROMPT_TYPES:
+        if t in _DEFAULT_EXCLUDED and not include_negative:
+            continue
         if t in _NEEDS_TWO and len(ents) < 2:
             continue
         if t in _NEEDS_ENTITY and len(ents) < 1:
             continue
         usable.append(t)
-    if not usable:  # no entities at all -> domain-only templates
-        usable = ["list", "negative"]
+    if not usable:  # no entities at all -> domain-only list fallback
+        usable = ["_list_domain"]
 
     probes: List[Dict[str, Any]] = []
     for _ in range(n_prompts):
         ptype = rng.choice(usable)
+        if ptype == "_list_domain":
+            prompt = (f"List five verified, atomic facts about {domain}. Each "
+                      f"must be a distinct subject-predicate-object triple.")
+            probes.append({"domain": domain, "prompt_type": "list", "prompt": prompt})
+            continue
         if ptype in _NEEDS_TWO:
             e1, e2 = rng.sample(ents, 2)
             prompt = render_prompt(ptype, domain=domain, e1=e1, e2=e2)

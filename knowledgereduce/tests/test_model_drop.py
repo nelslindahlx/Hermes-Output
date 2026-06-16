@@ -76,6 +76,28 @@ def test_probe_output_skips_incomplete_triples():
     assert facts[0]["subject"] == "A"
 
 
+def test_probe_output_skips_degenerate_domain_subject():
+    # A model that just echoes the domain as the subject ("Biochemistry
+    # common misconception ...") is noise, not a fact. Reject it.
+    po = _probe_output(domain="biochemistry", facts=[
+        {"subject": "Biochemistry", "predicate": "common misconception",
+         "object": "Biochemistry only deals with living organisms"},
+        {"subject": "Mitochondria", "predicate": "produce", "object": "ATP"},  # ok
+    ])
+    facts = probe_output_to_facts(po)
+    subjects = [f["subject"] for f in facts]
+    assert "Mitochondria" in subjects
+    assert "Biochemistry" not in subjects  # domain-as-subject rejected
+
+
+def test_probe_output_skips_object_repeating_subject():
+    # "Biochemistry ... Biochemistry only deals ..." — subject echoed in object
+    po = _probe_output(domain="chemistry", facts=[
+        {"subject": "Chemistry", "predicate": "is", "object": "Chemistry is a science"},
+    ])
+    assert probe_output_to_facts(po) == []
+
+
 def test_confidence_affects_quality_score():
     hi = probe_output_to_facts(_probe_output(facts=[
         {"subject": "A", "predicate": "is", "object": "B", "confidence": 1.0}]))[0]

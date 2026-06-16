@@ -74,6 +74,27 @@ def _confidence_to_quality(confidence: Optional[float]) -> float:
     return base + c * 10.0
 
 
+def _is_degenerate(subject: str, predicate: str, obj: str, domain_norm: str) -> bool:
+    """Reject low-signal "facts" that probes (esp. list/negative) emit.
+
+    Two common failure modes from forcing prose answers into the SVO schema:
+
+    * **domain echo** -- the model just restates the domain as the subject
+      ("Biochemistry / common misconception / ..."), which carries no atomic
+      fact;
+    * **subject echoed in object** -- the object simply repeats the subject
+      ("Chemistry is a science"), i.e. a tautological/run-on filler.
+    """
+    s = " ".join(subject.lower().split())
+    o = " ".join(obj.lower().split())
+    if domain_norm and s == domain_norm:
+        return True
+    # object leads with the subject token(s) -> echo / run-on, not an SVO fact
+    if s and (o == s or o.startswith(s + " ")):
+        return True
+    return False
+
+
 def probe_output_to_facts(probe_output: Dict[str, Any],
                           reliability: str = "POSSIBLY_TRUE") -> List[Dict[str, Any]]:
     """Convert one probe output into a list of KnowledgeReduce fact dicts.
@@ -97,6 +118,7 @@ def probe_output_to_facts(probe_output: Dict[str, Any],
     raw_facts = structured.get("facts") or []
 
     category = domain[:1].upper() + domain[1:] if domain else "General"
+    domain_norm = " ".join(str(domain or "").lower().split())
     facts: List[Dict[str, Any]] = []
     for rf in raw_facts:
         subject = (rf.get("subject") or "").strip()
@@ -104,6 +126,8 @@ def probe_output_to_facts(probe_output: Dict[str, Any],
         obj = (rf.get("object") or "").strip()
         if not subject or not predicate or not obj:
             continue  # SPO is mandatory; skip malformed emissions
+        if _is_degenerate(subject, predicate, obj, domain_norm):
+            continue  # reject domain-echo / subject-in-object noise
         qualifier = rf.get("context_or_qualifier")
         confidence = rf.get("confidence")
         statement = model_fact_statement(subject, predicate, obj, qualifier)
