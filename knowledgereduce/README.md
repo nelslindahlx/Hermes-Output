@@ -386,6 +386,51 @@ knowledgereduce eval --gold mygold.json
 (15 items). This is the number future extractor changes are measured
 against — chase F1, don't eyeball.
 
+## ModelReduce (harvest knowledge from local models)
+
+ModelReduce extends KnowledgeReduce to distill knowledge *out of language
+models themselves*: probe local models for structured facts, corroborate
+across model lineages, rate reliability by cross-model agreement, and emit
+training-ready shards — all Ollama-first and dependency-light.
+
+```bash
+pip install -e ".[model-reduce]"      # ollama + pydantic (probing)
+pip install -e ".[model-reduce,graph]"  # + kuzu (graph store)
+```
+
+Pipeline:
+
+```bash
+# 1. Harvest: probe a fleet of models across domains (resumable, checkpointed)
+knowledgereduce graveyard --models qwen2.5:7b,phi4:latest \
+    --domains biochemistry,physics --n-prompts 20 --store store
+
+# 2. Distill: cluster cross-model facts, promote reliability by agreement
+knowledgereduce model-distill -o shard.jsonl --store store --min-agreement 2
+
+# 3. Gate: score against a gold set; fail CI if quality is too low
+knowledgereduce model-eval --store store --gold data/gold_biochem.json --embed --ci
+
+# 4. Prep: validate + filter into a training-ready SFT dataset
+knowledgereduce model-prep shard.jsonl -o train.jsonl --min-reliability likely_true --stats
+
+# 5. (optional) Query the corpus as a graph
+knowledgereduce graph-ingest --store store --graph-db graph_db --embed
+knowledgereduce serve-mcp --graph-db graph_db    # LLM-callable tools over HTTP
+```
+
+**Reliability ladder** (by distinct-model agreement): 1 → POSSIBLY_TRUE,
+2 → LIKELY_TRUE, ≥3 → VERIFIED. Cross-model clustering is paraphrase-aware
+when an embedding model (`mxbai-embed-large`) is available, else falls back
+to word-overlap.
+
+**Honest caveat:** at small probe volumes, cross-model agreement is *not yet*
+a reliable precision signal — the demo biochem shard fails the quality gates
+(see `MODELREDUCE_SESSIONS.md`). Probe at scale and re-check the gates before
+training. The actual LoRA training run is documented in
+`docs/model_reduce_training.md` (it needs real GPU hardware and a
+gate-passing shard — by design, not run in CI).
+
 ## Testing
 
 ```bash

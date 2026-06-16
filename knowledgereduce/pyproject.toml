@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "knowledgereduce"
-version = "0.2.0"
-description = "Distill documents into compact, reliability-rated, model-absorbable knowledge facts."
+version = "0.3.0"
+description = "Distill documents AND local models into compact, reliability-rated, model-absorbable knowledge facts."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { file = "LICENSE" }
